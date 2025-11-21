@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鐘錶眼鏡客戶管理系統</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInWithPopup, 
+            GoogleAuthProvider, 
+            signOut, 
+            onAuthStateChanged,
+            signInWithCustomToken,
+            signInAnonymously
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            setDoc, 
+            addDoc,
+            deleteDoc,
+            updateDoc,
+            getDocs, 
+            getDoc,
+            query, 
+            where,
+            onSnapshot
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose to window for React component
+        window.firebaseModules = { 
+            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, 
+            signInWithCustomToken, signInAnonymously,
+            getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot
+        };
+    </script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { 
+            Search, Plus, Trash2, Edit, Save, User, LogOut, FileSpreadsheet, 
+            Settings, Database, Eye, FileText, ChevronDown, ChevronUp 
+        } = lucide;
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDxtxWF-jQMMxvAeMjP5-HJ6y6_QBxLdsY",
+            authDomain: "test1-1246d.firebaseapp.com",
+            projectId: "test1-1246d",
+            storageBucket: "test1-1246d.firebasestorage.app",
+            messagingSenderId: "1046567528056",
+            appId: "1:1046567528056:web:4e34594985c21d8892af8d",
+            measurementId: "G-8JNGR22WDW"
+        };
+
+        // --- Initialize Firebase ---
+        const { initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } = window.firebaseModules;
+        const { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot } = window.firebaseModules;
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- Constants & Field Definitions ---
+        const CMF_FIELDS = [
+            { key: 'CID1', label: '客戶編號', type: 'text', required: true },
+            { key: 'NAME', label: '客戶姓名', type: 'text', required: true },
+            { key: 'SEX', label: '性別', type: 'select', options: ['男', '女', '其他'] },
+            { key: 'TEL', label: '電話', type: 'tel' },
+            { key: 'BIRDATE', label: '生日', type: 'date' },
+            { key: 'ADDRESS', label: '地址', type: 'text', className: 'col-span-2' },
+            { key: 'INDATE', label: '初訪日期', type: 'date' },
+            { key: 'LASTD', label: '最後日期', type: 'date' },
+            { key: 'CLASS', label: '備考', type: 'text' },
+            { key: 'CLASS1', label: '備考1', type: 'text' },
+            { key: 'SUM', label: '總計', type: 'number' },
+        ];
+
+        const PRXMF_FIELDS = [
+            { key: 'DATE', label: '登錄日期', type: 'date' },
+            { key: 'RSPH', label: '右眼球面(SPH)', type: 'text' },
+            { key: 'RCYL', label: '右眼散光(CYL)', type: 'text' },
+            { key: 'RAXIS', label: '右眼角度(AXIS)', type: 'text' },
+            { key: 'RADD', label: '右眼老花(ADD)', type: 'text' },
+            { key: 'RBCV', label: '右眼V', type: 'text' },
+            { key: 'RBCH', label: '右眼H', type: 'text' },
+            { key: 'LSPH', label: '左眼球面(SPH)', type: 'text' },
+            { key: 'LCYL', label: '左眼散光(CYL)', type: 'text' },
+            { key: 'LAXIS', label: '左眼角度(AXIS)', type: 'text' },
+            { key: 'LADD', label: '左眼老花(ADD)', type: 'text' },
+            { key: 'LBCV', label: '左眼V', type: 'text' },
+            { key: 'LBCH', label: '左眼H', type: 'text' },
+            { key: 'PD', label: '瞳距(PD)', type: 'text' },
+            { key: 'ITEM', label: 'ITEM', type: 'text' },
+            { key: 'RITEM', label: '隱形右眼', type: 'text' },
+            { key: 'LITEM', label: '隱形左眼', type: 'text' },
+            { key: 'RBRVISE1', label: '右眼矯正前', type: 'text' },
+            { key: 'LBRVISE1', label: '左眼矯正前', type: 'text' },
+            { key: 'RBRVISE2', label: '右眼矯正後', type: 'text' },
+            { key: 'LBRVISE2', label: '左眼矯正後', type: 'text' },
+            { key: 'REMARK', label: '備註一', type: 'text', className: 'col-span-3' },
+            { key: 'REMARK2', label: '備註二', type: 'text', className: 'col-span-3' },
+            { key: 'REMARK3', label: '備註三', type: 'text', className: 'col-span-3' },
+            { key: 'AGE', label: '年齡', type: 'number' },
+            { key: 'NUM', label: '筆數', type: 'number' },
+        ];
+
+        // --- Utility Components ---
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+        );
+
+        const Modal = ({ title, onClose, children }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
+                        <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+                    </div>
+                    <div className="p-6">
+                        {children}
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- Main Application Component ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [isAdmin, setIsAdmin] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [activeTab, setActiveTab] = useState('search');
+            
+            // Data State
+            const [customers, setCustomers] = useState([]);
+            const [filteredCustomers, setFilteredCustomers] = useState([]);
+            const [selectedCustomer, setSelectedCustomer] = useState(null);
+            const [customerPrescriptions, setCustomerPrescriptions] = useState([]);
+            
+            // Search State
+            const [searchCriteria, setSearchCriteria] = useState({
+                CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: ''
+            });
+
+            // Modal State
+            const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+            const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
+            const [editingData, setEditingData] = useState({});
+            const [mode, setMode] = useState('add'); // 'add' or 'edit'
+
+            // Admin Panel State
+            const [systemUsers, setSystemUsers] = useState([]);
+            const [msg, setMsg] = useState({ text: '', type: '' });
+
+            // --- Authentication & Initialization ---
+            useEffect(() => {
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        // Initial simple connection for environment
+                        // Actual user login happens via button
+                    }
+                };
+                initAuth();
+
+                const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        // Check Admin Status in 'sys_users' collection
+                        const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                        const q = query(adminRef, where('email', '==', currentUser.email));
+                        
+                        // Basic fetch to see if ANY admins exist (for auto-setup)
+                        const snapshot = await getDocs(adminRef);
+                        const allUsers = snapshot.docs.map(d => d.data());
+                        const myUser = allUsers.find(u => u.email === currentUser.email);
+                        
+                        if (myUser && myUser.role === 'admin') {
+                            setIsAdmin(true);
+                        } else {
+                            setIsAdmin(false);
+                        }
+                    } else {
+                        setIsAdmin(false);
+                        setCustomers([]);
+                        setSelectedCustomer(null);
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // --- Data Listeners (CMF) ---
+            useEffect(() => {
+                if (!user) return;
+                
+                setLoading(true);
+                // Fetch all customers - simpler for search in this demo context 
+                // In production with huge data, would use Firestore indexes/Algolia
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'CMF');
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setCustomers(data);
+                    setFilteredCustomers(data);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Error fetching customers:", error);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, [user]);
+
+            // --- Data Listeners (PRXMF for selected customer) ---
+            useEffect(() => {
+                if (!user || !selectedCustomer) {
+                    setCustomerPrescriptions([]);
+                    return;
+                }
+
+                const q = query(
+                    collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF'), 
+                    where('CID1', '==', selectedCustomer.CID1)
+                );
+                
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    // Sort by DATE desc in memory
+                    data.sort((a, b) => new Date(b.DATE) - new Date(a.DATE));
+                    setCustomerPrescriptions(data);
+                }, (error) => console.error(error));
+                
+                return () => unsubscribe();
+            }, [selectedCustomer, user]);
+
+
+            // --- Actions: Login/Logout ---
+            const handleGoogleLogin = async () => {
+                const provider = new GoogleAuthProvider();
+                try {
+                    await signInWithPopup(auth, provider);
+                } catch (error) {
+                    console.error(error);
+                    alert("登入失敗: " + error.message);
+                }
+            };
+
+            const handleLogout = () => signOut(auth);
+
+            // --- Actions: Search ---
+            useEffect(() => {
+                const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
+                const lowerName = NAME.toLowerCase();
+                const lowerAddr = ADDRESS.toLowerCase();
+
+                const filtered = customers.filter(c => {
+                    const matchCID = CID1 ? String(c.CID1).includes(CID1) : true;
+                    const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(lowerName) : true;
+                    const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
+                    const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(lowerAddr) : true;
+                    const matchBirth = BIRDATE ? c.BIRDATE === BIRDATE : true;
+                    return matchCID && matchName && matchTel && matchAddr && matchBirth;
+                });
+                setFilteredCustomers(filtered);
+            }, [searchCriteria, customers]);
+
+            // --- Actions: Customer CRUD ---
+            const openCustomerModal = (customer = null) => {
+                if (customer) {
+                    setMode('edit');
+                    setEditingData({ ...customer });
+                } else {
+                    setMode('add');
+                    setEditingData({ CID1: '', NAME: '', SEX: '男', INDATE: new Date().toISOString().split('T')[0] });
+                }
+                setIsCustomerModalOpen(true);
+            };
+
+            const saveCustomer = async () => {
+                if (!isAdmin) return;
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'CMF');
+                
+                try {
+                    if (mode === 'add') {
+                        // Check duplicate CID1
+                        if (customers.some(c => c.CID1 === editingData.CID1)) {
+                            alert('客戶編號已存在');
+                            return;
+                        }
+                        await addDoc(colRef, editingData);
+                    } else {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'CMF', editingData.id);
+                        const { id, ...updateData } = editingData;
+                        await updateDoc(docRef, updateData);
+                    }
+                    setIsCustomerModalOpen(false);
+                    showMsg('客戶資料儲存成功', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showMsg('儲存失敗', 'error');
+                }
+            };
+
+            const deleteCustomer = async (id, cid1) => {
+                if (!isAdmin || !confirm('確定要刪除此客戶及其所有驗光資料嗎？')) return;
+                
+                try {
+                    // 1. Delete Customer
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'CMF', id));
+                    
+                    // 2. Delete linked Prescriptions (Client-side simulation since we can't use cloud functions)
+                    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF'), where('CID1', '==', cid1));
+                    const snapshot = await getDocs(q);
+                    const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
+                    await Promise.all(deletePromises);
+                    
+                    if (selectedCustomer?.id === id) setSelectedCustomer(null);
+                    showMsg('刪除成功', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showMsg('刪除失敗', 'error');
+                }
+            };
+
+            // --- Actions: Prescription CRUD ---
+            const openPrxModal = (prx = null) => {
+                if (!selectedCustomer) return;
+                if (prx) {
+                    setMode('edit');
+                    setEditingData({ ...prx });
+                } else {
+                    setMode('add');
+                    setEditingData({ 
+                        CID1: selectedCustomer.CID1,
+                        NAME: selectedCustomer.NAME,
+                        TEL: selectedCustomer.TEL,
+                        DATE: new Date().toISOString().split('T')[0]
+                    });
+                }
+                setIsPrxModalOpen(true);
+            };
+
+            const savePrx = async () => {
+                if (!isAdmin) return;
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF');
+                
+                try {
+                    if (mode === 'add') {
+                        await addDoc(colRef, editingData);
+                    } else {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', editingData.id);
+                        const { id, ...updateData } = editingData;
+                        await updateDoc(docRef, updateData);
+                    }
+                    setIsPrxModalOpen(false);
+                    
+                    // Update Last Date in CMF
+                    if (selectedCustomer && editingData.DATE) {
+                         const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'CMF', selectedCustomer.id);
+                         await updateDoc(customerRef, { LASTD: editingData.DATE });
+                    }
+                    
+                    showMsg('驗光資料儲存成功', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showMsg('儲存失敗', 'error');
+                }
+            };
+
+            const deletePrx = async (id) => {
+                if (!isAdmin || !confirm('確定刪除此筆驗光紀錄？')) return;
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', id));
+                    showMsg('刪除成功', 'success');
+                } catch(e) {
+                    showMsg('刪除失敗', 'error');
+                }
+            };
+
+
+            // --- Admin: System Setup & User Management ---
+            const initializeAdmin = async () => {
+                if (!user) return;
+                const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                const snapshot = await getDocs(usersRef);
+                if (!snapshot.empty) {
+                    showMsg('系統已有管理員', 'error');
+                    return;
+                }
+                await addDoc(usersRef, {
+                    email: user.email,
+                    role: 'admin',
+                    addedAt: new Date().toISOString()
+                });
+                setIsAdmin(true);
+                showMsg('您已成為系統管理員', 'success');
+            };
+
+            const fetchSystemUsers = async () => {
+                if (!isAdmin) return;
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                const snap = await getDocs(q);
+                setSystemUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            };
+
+            const addUser = async (email) => {
+                if (!email) return;
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sys_users'), {
+                    email, role: 'user', addedAt: new Date().toISOString()
+                });
+                fetchSystemUsers();
+            };
+
+            const removeUser = async (id) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id));
+                fetchSystemUsers();
+            };
+
+            // --- CSV Import/Export ---
+            const exportCSV = (type) => {
+                const data = type === 'CMF' ? customers : customerPrescriptions; // Or all prescriptions if needed
+                if (data.length === 0) { alert('無資料可匯出'); return; }
+                
+                const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key);
+                // Always include CID1/NAME in PRXMF export just in case
+                if (type === 'PRXMF') headers.unshift('CID1', 'NAME');
+
+                const csvContent = [
+                    headers.join(','),
+                    ...data.map(row => headers.map(fieldName => {
+                        let val = row[fieldName] || '';
+                        val = String(val).replace(/"/g, '""'); 
+                        return `"${val}"`;
+                    }).join(','))
+                ].join('\n');
+
+                const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${type}_${new Date().toISOString().slice(0,10)}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const handleImportCSV = (e, type) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async (evt) => {
+                    const text = evt.target.result;
+                    const rows = text.split('\n').map(r => r.trim()).filter(r => r);
+                    const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
+                    
+                    const batchData = [];
+                    for (let i = 1; i < rows.length; i++) {
+                        const values = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
+                        const obj = {};
+                        headers.forEach((h, idx) => obj[h] = values[idx]);
+                        batchData.push(obj);
+                    }
+
+                    // Batch Write (simulated with Promise.all for simplicity in single file without batch limit logic complexity)
+                    const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
+                    let count = 0;
+                    try {
+                        for (const d of batchData) {
+                            // Basic deduplication check could go here
+                            await addDoc(colRef, d);
+                            count++;
+                        }
+                        showMsg(`成功匯入 ${count} 筆資料`, 'success');
+                    } catch (err) {
+                        console.error(err);
+                        showMsg('匯入過程發生錯誤', 'error');
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const showMsg = (text, type) => {
+                setMsg({ text, type });
+                setTimeout(() => setMsg({ text: '', type: '' }), 3000);
+            };
+
+
+            // --- Render ---
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                        <div className="bg-white p-8 rounded-lg shadow-lg text-center max-w-md w-full">
+                            <Eye className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+                            <h1 className="text-2xl font-bold mb-2 text-gray-800">鐘錶眼鏡客戶管理系統</h1>
+                            <p className="text-gray-500 mb-6">請登入以存取系統</p>
+                            <button 
+                                onClick={handleGoogleLogin}
+                                className="w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 rounded flex items-center justify-center hover:bg-gray-50 transition shadow-sm"
+                            >
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" />
+                                使用 Google 帳號登入
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    {/* Header */}
+                    <header className="bg-blue-800 text-white p-4 shadow-md">
+                        <div className="container mx-auto flex justify-between items-center">
+                            <div className="flex items-center space-x-2 cursor-pointer" onClick={() => {setSelectedCustomer(null); setActiveTab('search');}}>
+                                <Eye className="w-8 h-8" />
+                                <h1 className="text-xl font-bold hidden md:block">客戶管理系統</h1>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                                <div className="text-sm text-blue-200 flex items-center">
+                                    <User className="w-4 h-4 mr-1" />
+                                    {user.displayName || user.email}
+                                    {isAdmin && <span className="ml-2 bg-yellow-500 text-blue-900 text-xs px-2 py-0.5 rounded-full font-bold">管理員</span>}
+                                </div>
+                                <button onClick={handleLogout} className="text-blue-200 hover:text-white">
+                                    <LogOut className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Navigation */}
+                    <nav className="bg-white shadow border-b">
+                        <div className="container mx-auto flex space-x-1">
+                            <button 
+                                className={`px-6 py-3 border-b-2 font-medium ${activeTab === 'search' && !selectedCustomer ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                                onClick={() => { setSelectedCustomer(null); setActiveTab('search'); }}
+                            >
+                                客戶查詢
+                            </button>
+                            {selectedCustomer && (
+                                <button 
+                                    className={`px-6 py-3 border-b-2 font-medium border-blue-600 text-blue-600`}
+                                >
+                                    {selectedCustomer.NAME} 的資料
+                                </button>
+                            )}
+                            {isAdmin && (
+                                <button 
+                                    className={`px-6 py-3 border-b-2 font-medium ${activeTab === 'admin' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                                    onClick={() => { setSelectedCustomer(null); setActiveTab('admin'); fetchSystemUsers(); }}
+                                >
+                                    系統管理
+                                </button>
+                            )}
+                        </div>
+                    </nav>
+
+                    {/* Toast Message */}
+                    {msg.text && (
+                        <div className={`fixed top-4 right-4 p-4 rounded shadow-lg z-50 text-white ${msg.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+                            {msg.text}
+                        </div>
+                    )}
+
+                    {/* Main Content */}
+                    <main className="flex-1 container mx-auto p-4 overflow-y-auto">
+                        {loading && <LoadingSpinner />}
+
+                        {/* Search View */}
+                        {activeTab === 'search' && !selectedCustomer && !loading && (
+                            <div className="space-y-6">
+                                <div className="bg-white p-4 rounded shadow">
+                                    <h2 className="text-lg font-semibold mb-4 flex items-center"><Search className="w-5 h-5 mr-2"/> 搜尋條件</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                                        <input placeholder="客戶編號" className="border p-2 rounded" value={searchCriteria.CID1} onChange={e => setSearchCriteria({...searchCriteria, CID1: e.target.value})} />
+                                        <input placeholder="姓名" className="border p-2 rounded" value={searchCriteria.NAME} onChange={e => setSearchCriteria({...searchCriteria, NAME: e.target.value})} />
+                                        <input placeholder="電話" className="border p-2 rounded" value={searchCriteria.TEL} onChange={e => setSearchCriteria({...searchCriteria, TEL: e.target.value})} />
+                                        <input placeholder="地址" className="border p-2 rounded" value={searchCriteria.ADDRESS} onChange={e => setSearchCriteria({...searchCriteria, ADDRESS: e.target.value})} />
+                                        <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e => setSearchCriteria({...searchCriteria, BIRDATE: e.target.value})} />
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded shadow">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-lg font-semibold">客戶列表 ({filteredCustomers.length})</h2>
+                                        {isAdmin && (
+                                            <button onClick={() => openCustomerModal()} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center hover:bg-blue-700">
+                                                <Plus className="w-4 h-4 mr-2" /> 新增客戶
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <thead className="bg-gray-50">
+                                                <tr>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">編號</th>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">性別</th>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話</th>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">生日</th>
+                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="bg-white divide-y divide-gray-200">
+                                                {filteredCustomers.map(c => (
+                                                    <tr key={c.id} className="hover:bg-gray-50">
+                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-900">{c.CID1}</td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-blue-600 font-medium cursor-pointer hover:underline" onClick={() => setSelectedCustomer(c)}>
+                                                            {c.NAME}
+                                                        </td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.SEX}</td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.TEL}</td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.BIRDATE}</td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500 flex space-x-2">
+                                                            <button onClick={() => setSelectedCustomer(c)} className="text-blue-600 hover:text-blue-800"><FileText className="w-4 h-4"/></button>
+                                                            {isAdmin && (
+                                                                <>
+                                                                    <button onClick={() => openCustomerModal(c)} className="text-green-600 hover:text-green-800"><Edit className="w-4 h-4"/></button>
+                                                                    <button onClick={() => deleteCustomer(c.id, c.CID1)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></button>
+                                                                </>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {filteredCustomers.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan="6" className="text-center py-8 text-gray-400">無符合資料</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Customer Detail View */}
+                        {selectedCustomer && !loading && (
+                            <div className="space-y-6 fade-in">
+                                {/* Basic Info Card */}
+                                <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <h2 className="text-2xl font-bold text-gray-800">{selectedCustomer.NAME} <span className="text-lg text-gray-500 font-normal">({selectedCustomer.CID1})</span></h2>
+                                        {isAdmin && (
+                                            <button onClick={() => openCustomerModal(selectedCustomer)} className="text-blue-600 hover:bg-blue-50 p-2 rounded">
+                                                <Edit className="w-5 h-5"/>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                                        <div><span className="text-gray-500 block">電話</span> <span className="text-lg">{selectedCustomer.TEL}</span></div>
+                                        <div><span className="text-gray-500 block">生日</span> <span className="text-lg">{selectedCustomer.BIRDATE}</span></div>
+                                        <div><span className="text-gray-500 block">性別</span> <span className="text-lg">{selectedCustomer.SEX}</span></div>
+                                        <div className="col-span-1 md:col-span-3"><span className="text-gray-500 block">地址</span> <span className="text-lg">{selectedCustomer.ADDRESS}</span></div>
+                                        <div><span className="text-gray-500 block">初訪</span> {selectedCustomer.INDATE}</div>
+                                        <div><span className="text-gray-500 block">最後光臨</span> {selectedCustomer.LASTD}</div>
+                                        <div><span className="text-gray-500 block">消費總計</span> {selectedCustomer.SUM}</div>
+                                        <div className="col-span-1 md:col-span-3 bg-gray-50 p-2 rounded">
+                                            <span className="text-gray-500 font-bold">備考:</span> {selectedCustomer.CLASS} {selectedCustomer.CLASS1}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Prescriptions List */}
+                                <div className="bg-white p-4 rounded shadow">
+                                    <div className="flex justify-between items-center mb-4 border-b pb-2">
+                                        <h3 className="text-xl font-bold text-gray-700 flex items-center"><Database className="w-5 h-5 mr-2"/> 驗光紀錄</h3>
+                                        {isAdmin && (
+                                            <button onClick={() => openPrxModal()} className="bg-green-600 text-white px-4 py-2 rounded flex items-center hover:bg-green-700 shadow">
+                                                <Plus className="w-4 h-4 mr-2" /> 新增驗光
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        {customerPrescriptions.map(prx => (
+                                            <div key={prx.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div className="font-bold text-lg text-blue-800">{prx.DATE}</div>
+                                                    {isAdmin && (
+                                                        <div className="flex space-x-2">
+                                                            <button onClick={() => openPrxModal(prx)} className="p-1 text-gray-500 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
+                                                            <button onClick={() => deletePrx(prx.id)} className="p-1 text-gray-500 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm">
+                                                    {/* Right Eye */}
+                                                    <div className="bg-red-50 p-3 rounded">
+                                                        <div className="font-bold text-red-800 border-b border-red-200 mb-2">R (右眼)</div>
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            <div><span className="text-xs text-gray-500 block">SPH</span>{prx.RSPH}</div>
+                                                            <div><span className="text-xs text-gray-500 block">CYL</span>{prx.RCYL}</div>
+                                                            <div><span className="text-xs text-gray-500 block">AXIS</span>{prx.RAXIS}</div>
+                                                            <div><span className="text-xs text-gray-500 block">ADD</span>{prx.RADD}</div>
+                                                            <div><span className="text-xs text-gray-500 block">V</span>{prx.RBCV}</div>
+                                                            <div><span className="text-xs text-gray-500 block">H</span>{prx.RBCH}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">隱形</span>{prx.RITEM}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">矯正前</span>{prx.RBRVISE1}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">矯正後</span>{prx.RBRVISE2}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Left Eye */}
+                                                    <div className="bg-blue-50 p-3 rounded">
+                                                        <div className="font-bold text-blue-800 border-b border-blue-200 mb-2">L (左眼)</div>
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            <div><span className="text-xs text-gray-500 block">SPH</span>{prx.LSPH}</div>
+                                                            <div><span className="text-xs text-gray-500 block">CYL</span>{prx.LCYL}</div>
+                                                            <div><span className="text-xs text-gray-500 block">AXIS</span>{prx.LAXIS}</div>
+                                                            <div><span className="text-xs text-gray-500 block">ADD</span>{prx.LADD}</div>
+                                                            <div><span className="text-xs text-gray-500 block">V</span>{prx.LBCV}</div>
+                                                            <div><span className="text-xs text-gray-500 block">H</span>{prx.LBCH}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">隱形</span>{prx.LITEM}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">矯正前</span>{prx.LBRVISE1}</div>
+                                                            <div className="col-span-2"><span className="text-xs text-gray-500 block">矯正後</span>{prx.LBRVISE2}</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-3 grid grid-cols-2 gap-4 text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                                                    <div><span className="font-bold">PD:</span> {prx.PD}</div>
+                                                    <div><span className="font-bold">AGE:</span> {prx.AGE}</div>
+                                                    <div className="col-span-2"><span className="font-bold">ITEM:</span> {prx.ITEM}</div>
+                                                    <div className="col-span-2 border-t pt-1">{prx.REMARK}</div>
+                                                    <div className="col-span-2">{prx.REMARK2}</div>
+                                                    <div className="col-span-2">{prx.REMARK3}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {customerPrescriptions.length === 0 && <div className="text-center text-gray-400 py-4">尚無驗光紀錄</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Admin Panel */}
+                        {activeTab === 'admin' && isAdmin && (
+                            <div className="space-y-6">
+                                {/* System Setup (If needed) */}
+                                <div className="bg-white p-6 rounded shadow">
+                                    <h2 className="text-lg font-bold mb-4 flex items-center"><Settings className="w-5 h-5 mr-2"/> 資料管理</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="border p-4 rounded">
+                                            <h3 className="font-semibold mb-2 text-blue-600">客戶資料 (CMF)</h3>
+                                            <div className="flex flex-col space-y-2">
+                                                <button onClick={() => exportCSV('CMF')} className="bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 px-4 rounded flex items-center justify-center">
+                                                    <FileSpreadsheet className="w-4 h-4 mr-2"/> 匯出 CSV
+                                                </button>
+                                                <label className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded flex items-center justify-center cursor-pointer">
+                                                    <Database className="w-4 h-4 mr-2"/> 匯入 CSV
+                                                    <input type="file" accept=".csv" className="hidden" onChange={(e) => handleImportCSV(e, 'CMF')} />
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div className="border p-4 rounded">
+                                            <h3 className="font-semibold mb-2 text-green-600">驗光資料 (PRXMF)</h3>
+                                            <div className="flex flex-col space-y-2">
+                                                <button onClick={() => exportCSV('PRXMF')} className="bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 px-4 rounded flex items-center justify-center">
+                                                    <FileSpreadsheet className="w-4 h-4 mr-2"/> 匯出 CSV
+                                                </button>
+                                                <label className="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded flex items-center justify-center cursor-pointer">
+                                                    <Database className="w-4 h-4 mr-2"/> 匯入 CSV
+                                                    <input type="file" accept=".csv" className="hidden" onChange={(e) => handleImportCSV(e, 'PRXMF')} />
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-6 rounded shadow">
+                                    <h2 className="text-lg font-bold mb-4">使用者權限管理</h2>
+                                    <div className="flex gap-2 mb-4">
+                                        <input type="email" id="new-user-email" placeholder="輸入使用者 Email" className="border p-2 rounded flex-1" />
+                                        <button onClick={() => {
+                                            const input = document.getElementById('new-user-email');
+                                            addUser(input.value);
+                                            input.value = '';
+                                        }} className="bg-blue-600 text-white px-4 py-2 rounded">新增使用者</button>
+                                    </div>
+                                    <ul className="divide-y">
+                                        {systemUsers.map(u => (
+                                            <li key={u.id} className="py-3 flex justify-between items-center">
+                                                <div>
+                                                    <span className="font-medium">{u.email}</span>
+                                                    <span className={`ml-2 text-xs px-2 py-1 rounded ${u.role === 'admin' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>
+                                                        {u.role === 'admin' ? '管理員' : '一般使用者'}
+                                                    </span>
+                                                </div>
+                                                {u.role !== 'admin' && (
+                                                    <button onClick={() => removeUser(u.id)} className="text-red-600 hover:text-red-800 text-sm">刪除</button>
+                                                )}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Admin Init Helper (Only visible if no Admin exists) */}
+                        {activeTab === 'search' && !isAdmin && (
+                            <div className="mt-10 text-center">
+                                <button onClick={initializeAdmin} className="text-xs text-gray-300 hover:text-gray-500">系統初始化(設為管理員)</button>
+                            </div>
+                        )}
+
+                    </main>
+
+                    {/* Modals */}
+                    {isCustomerModalOpen && (
+                        <Modal title={mode === 'add' ? "新增客戶" : "編輯客戶"} onClose={() => setIsCustomerModalOpen(false)}>
+                            <form onSubmit={(e) => { e.preventDefault(); saveCustomer(); }} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {CMF_FIELDS.map(field => (
+                                    <div key={field.key} className={field.className || ''}>
+                                        <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+                                        {field.type === 'select' ? (
+                                            <select 
+                                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                                                value={editingData[field.key] || '男'}
+                                                onChange={e => setEditingData({...editingData, [field.key]: e.target.value})}
+                                            >
+                                                {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                            </select>
+                                        ) : (
+                                            <input 
+                                                type={field.type}
+                                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                                                value={editingData[field.key] || ''}
+                                                onChange={e => setEditingData({...editingData, [field.key]: e.target.value})}
+                                                required={field.required}
+                                            />
+                                        )}
+                                    </div>
+                                ))}
+                                <div className="col-span-1 md:col-span-2 mt-4 flex justify-end space-x-3">
+                                    <button type="button" onClick={() => setIsCustomerModalOpen(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">取消</button>
+                                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                </div>
+                            </form>
+                        </Modal>
+                    )}
+
+                    {isPrxModalOpen && (
+                        <Modal title={mode === 'add' ? "新增驗光資料" : "編輯驗光資料"} onClose={() => setIsPrxModalOpen(false)}>
+                            <form onSubmit={(e) => { e.preventDefault(); savePrx(); }} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {PRXMF_FIELDS.map(field => (
+                                    <div key={field.key} className={field.className || ''}>
+                                        <label className="block text-xs font-bold text-gray-500">{field.label}</label>
+                                        <input 
+                                            type={field.type}
+                                            className="mt-1 block w-full border border-gray-300 rounded p-1.5 text-sm focus:border-blue-500"
+                                            value={editingData[field.key] || ''}
+                                            onChange={e => setEditingData({...editingData, [field.key]: e.target.value})}
+                                        />
+                                    </div>
+                                ))}
+                                <div className="col-span-2 md:col-span-4 mt-4 flex justify-end space-x-3">
+                                    <button type="button" onClick={() => setIsPrxModalOpen(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">取消</button>
+                                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                </div>
+                            </form>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
