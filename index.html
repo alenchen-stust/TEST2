@@ -188,16 +188,12 @@
 
             // --- Authentication & Initialization ---
             useEffect(() => {
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        // Initial simple connection for environment
-                        // Actual user login happens via button
-                    }
-                };
-                initAuth();
-
+                // Modified Initialization Logic:
+                // Since this app uses a specific external Firebase project (test1-1246d), 
+                // we should NOT use the environment's internal auth token (__initial_auth_token)
+                // because it will cause a project mismatch error (auth/custom-token-mismatch).
+                // Instead, we wait for the user to manually sign in via Google Popup.
+                
                 const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
@@ -205,15 +201,18 @@
                         const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
                         const q = query(adminRef, where('email', '==', currentUser.email));
                         
-                        // Basic fetch to see if ANY admins exist (for auto-setup)
-                        const snapshot = await getDocs(adminRef);
-                        const allUsers = snapshot.docs.map(d => d.data());
-                        const myUser = allUsers.find(u => u.email === currentUser.email);
-                        
-                        if (myUser && myUser.role === 'admin') {
-                            setIsAdmin(true);
-                        } else {
-                            setIsAdmin(false);
+                        try {
+                            const snapshot = await getDocs(adminRef);
+                            const allUsers = snapshot.docs.map(d => d.data());
+                            const myUser = allUsers.find(u => u.email === currentUser.email);
+                            
+                            if (myUser && myUser.role === 'admin') {
+                                setIsAdmin(true);
+                            } else {
+                                setIsAdmin(false);
+                            }
+                        } catch (err) {
+                            console.error("Error checking admin status:", err);
                         }
                     } else {
                         setIsAdmin(false);
@@ -275,7 +274,11 @@
                     await signInWithPopup(auth, provider);
                 } catch (error) {
                     console.error(error);
-                    alert("登入失敗: " + error.message);
+                    if (error.code === 'auth/unauthorized-domain') {
+                        alert(`【網域授權錯誤】\n您的網站網址尚未加入 Firebase 白名單。\n\n請前往 Firebase Console > Authentication > Settings > Authorized domains\n新增您的網域 (例如: gg90052.github.io)`);
+                    } else {
+                        alert("登入失敗: " + error.message);
+                    }
                 }
             };
 
