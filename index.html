@@ -199,17 +199,40 @@
                     if (currentUser) {
                         // Check Admin Status in 'sys_users' collection
                         const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
-                        const q = query(adminRef, where('email', '==', currentUser.email));
                         
+                        // Hardcoded Predefined Admins
+                        const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
+
                         try {
                             const snapshot = await getDocs(adminRef);
-                            const allUsers = snapshot.docs.map(d => d.data());
+                            const allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                             const myUser = allUsers.find(u => u.email === currentUser.email);
                             
-                            if (myUser && myUser.role === 'admin') {
+                            // Special Logic: Automatically grant admin if email is in predefined list
+                            if (PREDEFINED_ADMINS.includes(currentUser.email)) {
                                 setIsAdmin(true);
+                                
+                                // Sync to DB if missing or not admin
+                                if (!myUser) {
+                                    await addDoc(adminRef, {
+                                        email: currentUser.email,
+                                        role: 'admin',
+                                        addedAt: new Date().toISOString()
+                                    });
+                                    console.log("Auto-registered predefined admin:", currentUser.email);
+                                } else if (myUser.role !== 'admin') {
+                                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), {
+                                        role: 'admin'
+                                    });
+                                    console.log("Upgraded user to admin:", currentUser.email);
+                                }
                             } else {
-                                setIsAdmin(false);
+                                // Normal check for other users
+                                if (myUser && myUser.role === 'admin') {
+                                    setIsAdmin(true);
+                                } else {
+                                    setIsAdmin(false);
+                                }
                             }
                         } catch (err) {
                             console.error("Error checking admin status:", err);
