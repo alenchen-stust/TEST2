@@ -56,7 +56,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- Icons Definition (Replacing external dependency to fix React error) ---
+        // --- Icons Definition ---
         const Icon = ({ children, className, ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
         );
@@ -72,6 +72,8 @@
         const Database = (props) => <Icon {...props}><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></Icon>;
         const Eye = (props) => <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></Icon>;
         const FileText = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></Icon>;
+        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></Icon>;
+        const MessageSquare = (props) => <Icon {...props}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></Icon>;
 
         // --- Firebase Configuration ---
         const firebaseConfig = {
@@ -92,6 +94,24 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- Gemini API Helper ---
+        const callGeminiAPI = async (prompt) => {
+            const apiKey = ""; // Provided by environment at runtime
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || "無法產生 AI 回應";
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                return "發生錯誤，請稍後再試";
+            }
+        };
 
         // --- Constants & Field Definitions ---
         const CMF_FIELDS = [
@@ -130,7 +150,7 @@
             { key: 'LBRVISE1', label: '左眼矯正前', type: 'text' },
             { key: 'RBRVISE2', label: '右眼矯正後', type: 'text' },
             { key: 'LBRVISE2', label: '左眼矯正後', type: 'text' },
-            { key: 'REMARK', label: '備註一', type: 'text', className: 'col-span-3' },
+            { key: 'REMARK', label: '備註一 (可使用 AI 建議)', type: 'text', className: 'col-span-3' },
             { key: 'REMARK2', label: '備註二', type: 'text', className: 'col-span-3' },
             { key: 'REMARK3', label: '備註三', type: 'text', className: 'col-span-3' },
             { key: 'AGE', label: '年齡', type: 'number' },
@@ -158,12 +178,51 @@
             </div>
         );
 
+        const AiResultModal = ({ result, onClose }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg border border-purple-200">
+                    <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-4 rounded-t-xl flex justify-between items-center text-white">
+                        <h3 className="text-lg font-bold flex items-center">
+                            <Sparkles className="w-5 h-5 mr-2 text-yellow-300" />
+                            {result.title}
+                        </h3>
+                        <button onClick={onClose} className="hover:text-gray-200 text-2xl">&times;</button>
+                    </div>
+                    <div className="p-6">
+                        <div className="bg-gray-50 p-4 rounded border border-gray-100 text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            {result.content}
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-3">
+                             <button 
+                                onClick={() => {navigator.clipboard.writeText(result.content); alert('已複製內容');}}
+                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded flex items-center"
+                            >
+                                複製內容
+                            </button>
+                            {result.onApply && (
+                                <button 
+                                    onClick={() => { result.onApply(result.content); onClose(); }}
+                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded flex items-center"
+                                >
+                                    填入備註
+                                </button>
+                            )}
+                            <button onClick={onClose} className="px-4 py-2 border hover:bg-gray-50 rounded">關閉</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
         // --- Main Application Component ---
         const App = () => {
             const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
             const [loading, setLoading] = useState(true);
             const [activeTab, setActiveTab] = useState('search');
+            
+            // Auth Error State
+            const [authError, setAuthError] = useState(null);
             
             // Data State
             const [customers, setCustomers] = useState([]);
@@ -182,18 +241,16 @@
             const [editingData, setEditingData] = useState({});
             const [mode, setMode] = useState('add'); // 'add' or 'edit'
 
+            // AI State
+            const [aiResult, setAiResult] = useState(null);
+            const [isAiLoading, setIsAiLoading] = useState(false);
+
             // Admin Panel State
             const [systemUsers, setSystemUsers] = useState([]);
             const [msg, setMsg] = useState({ text: '', type: '' });
 
             // --- Authentication & Initialization ---
             useEffect(() => {
-                // Modified Initialization Logic:
-                // Since this app uses a specific external Firebase project (test1-1246d), 
-                // we should NOT use the environment's internal auth token (__initial_auth_token)
-                // because it will cause a project mismatch error (auth/custom-token-mismatch).
-                // Instead, we wait for the user to manually sign in via Google Popup.
-                
                 const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
@@ -292,15 +349,42 @@
 
             // --- Actions: Login/Logout ---
             const handleGoogleLogin = async () => {
+                setAuthError(null);
                 const provider = new GoogleAuthProvider();
                 try {
                     await signInWithPopup(auth, provider);
                 } catch (error) {
-                    console.error(error);
+                    console.error("Login Error:", error);
                     if (error.code === 'auth/unauthorized-domain') {
-                        alert(`【網域授權錯誤】\n您的網站網址尚未加入 Firebase 白名單。\n\n請前往 Firebase Console > Authentication > Settings > Authorized domains\n新增您的網域 (例如: gg90052.github.io)`);
+                        // 智慧解析網域：處理 blob URL 或是標準 URL
+                        let domainToAuthorize = window.location.hostname;
+                        
+                        // 如果是 blob 開頭 (預覽環境常見)，需要手動解析
+                        if (window.location.protocol === 'blob:') {
+                            try {
+                                // 移除 blob: 前綴，將其餘部分視為網址來解析
+                                const cleanUrl = window.location.href.replace('blob:', '');
+                                const urlObj = new URL(cleanUrl);
+                                domainToAuthorize = urlObj.hostname;
+                            } catch (e) {
+                                console.error("解析 blob 網域失敗", e);
+                                domainToAuthorize = "無法自動解析，請參考下方完整網址";
+                            }
+                        }
+
+                        setAuthError({
+                            type: 'domain',
+                            domain: domainToAuthorize,
+                            fullUrl: window.location.href,
+                            message: "此網域尚未授權"
+                        });
+                    } else if (error.code === 'auth/popup-closed-by-user') {
+                        console.log("User closed login popup");
                     } else {
-                        alert("登入失敗: " + error.message);
+                        setAuthError({
+                            type: 'other',
+                            message: `登入失敗 (${error.code}): ${error.message}`
+                        });
                     }
                 }
             };
@@ -323,6 +407,52 @@
                 });
                 setFilteredCustomers(filtered);
             }, [searchCriteria, customers]);
+
+            // --- Actions: AI Features ---
+            const handleGenerateCareMessage = async (customer) => {
+                if (!customer) return;
+                setIsAiLoading(true);
+                const prompt = `你是一位專業且親切的眼鏡行店長。請為客戶 ${customer.NAME} (上次光臨日期: ${customer.LASTD || '未知'}) 撰寫一則簡短的關懷簡訊。
+                內容重點：
+                1. 親切問候。
+                2. 提醒定期檢查視力或保養眼鏡（若上次光臨超過半年）。
+                3. 告知有新款式到貨，歡迎回店調整。
+                語氣：溫暖、不強迫推銷。長度限制：80字以內。`;
+
+                const result = await callGeminiAPI(prompt);
+                setAiResult({ title: `✨ AI 關懷簡訊建議 (${customer.NAME})`, content: result });
+                setIsAiLoading(false);
+            };
+
+            const handleAnalyzeVision = async () => {
+                const d = editingData;
+                const isEmpty = !d.RSPH && !d.LSPH && !d.AGE;
+                if (isEmpty) {
+                    alert("請先輸入至少部分驗光數據或年齡，AI 才能提供建議。");
+                    return;
+                }
+
+                setIsAiLoading(true);
+                const prompt = `請扮演專業驗光師，分析以下驗光數據並提供鏡片選擇建議：
+                客戶年齡: ${d.AGE || '未知'}
+                右眼 (R): SPH ${d.RSPH || '無'}, CYL ${d.RCYL || '無'}, AXIS ${d.RAXIS || '無'}
+                左眼 (L): SPH ${d.LSPH || '無'}, CYL ${d.LCYL || '無'}, AXIS ${d.LAXIS || '無'}
+                老花 (ADD): ${d.RADD || '無'}
+                
+                請提供一段約 80-100 字的簡短摘要，內容包括：
+                1. 屈光狀態簡述 (如：高度近視、散光、老花)。
+                2. 推薦鏡片類型 (如：高折射率、多焦、抗藍光等)。
+                3. 一句視力保健小叮嚀。
+                請直接輸出建議內容，不要有開場白。`;
+
+                const result = await callGeminiAPI(prompt);
+                setAiResult({ 
+                    title: '✨ AI 視力分析與鏡片建議', 
+                    content: result,
+                    onApply: (text) => setEditingData(prev => ({ ...prev, REMARK: text }))
+                });
+                setIsAiLoading(false);
+            };
 
             // --- Actions: Customer CRUD ---
             const openCustomerModal = (customer = null) => {
@@ -546,9 +676,68 @@
 
 
             // --- Render ---
+            // If user is not logged in, show login screen + Error Modal if exists
             if (!user) {
                 return (
-                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
+                        {/* Error Modal */}
+                        {authError && authError.type === 'domain' && (
+                            <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
+                                <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+                                    <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">
+                                        ⚠️ 網域授權錯誤 (auth/unauthorized-domain)
+                                    </h3>
+                                    
+                                    <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
+                                        <p className="text-red-700 text-sm font-bold mb-1">Firebase 拒絕了登入請求。</p>
+                                        <p className="text-red-600 text-xs">因為您目前的預覽環境網域不在白名單內。</p>
+                                    </div>
+
+                                    <div className="space-y-4 mb-6">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">請複製此網域 (貼到 Firebase)</label>
+                                            <div className="bg-gray-100 p-3 rounded text-lg font-mono border-2 border-blue-200 text-blue-800 select-all break-all">
+                                                {authError.domain}
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <label className="block text-xs text-gray-400 mb-1 uppercase">當前完整網址 (參考用)</label>
+                                            <div className="bg-gray-50 p-2 rounded text-xs font-mono text-gray-500 break-all border border-gray-200">
+                                                {authError.fullUrl}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-sm text-gray-600 mb-6">
+                                        請前往 <strong>Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains</strong>，點擊「Add domain」並貼上上方的網域。
+                                    </p>
+                                    <div className="flex justify-end space-x-3">
+                                        <button 
+                                            onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製網域');}}
+                                            className="px-4 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-semibold"
+                                        >
+                                            複製網域
+                                        </button>
+                                        <button 
+                                            onClick={() => setAuthError(null)}
+                                            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition"
+                                        >
+                                            關閉視窗
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {authError && authError.type === 'other' && (
+                            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 shadow">
+                                <span className="block sm:inline">{authError.message}</span>
+                                <span className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setAuthError(null)}>
+                                    <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/></svg>
+                                </span>
+                            </div>
+                        )}
+
                         <div className="bg-white p-8 rounded-lg shadow-lg text-center max-w-md w-full">
                             <Eye className="w-16 h-16 mx-auto text-blue-600 mb-4" />
                             <h1 className="text-2xl font-bold mb-2 text-gray-800">鐘錶眼鏡客戶管理系統</h1>
@@ -566,7 +755,18 @@
             }
 
             return (
-                <div className="min-h-screen flex flex-col">
+                <div className="min-h-screen flex flex-col relative">
+                    {/* Loading Overlay for AI */}
+                    {isAiLoading && (
+                        <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
+                             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+                             <p className="text-lg font-semibold animate-pulse">✨ AI 正在思考中...</p>
+                        </div>
+                    )}
+
+                    {/* AI Result Modal */}
+                    {aiResult && <AiResultModal result={aiResult} onClose={() => setAiResult(null)} />}
+
                     {/* Header */}
                     <header className="bg-blue-800 text-white p-4 shadow-md">
                         <div className="container mx-auto flex justify-between items-center">
@@ -697,14 +897,22 @@
                         {selectedCustomer && !loading && (
                             <div className="space-y-6 fade-in">
                                 {/* Basic Info Card */}
-                                <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600">
+                                <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600 relative">
                                     <div className="flex justify-between items-start mb-4">
                                         <h2 className="text-2xl font-bold text-gray-800">{selectedCustomer.NAME} <span className="text-lg text-gray-500 font-normal">({selectedCustomer.CID1})</span></h2>
-                                        {isAdmin && (
-                                            <button onClick={() => openCustomerModal(selectedCustomer)} className="text-blue-600 hover:bg-blue-50 p-2 rounded">
-                                                <Edit className="w-5 h-5"/>
+                                        <div className="flex space-x-2">
+                                            <button 
+                                                onClick={() => handleGenerateCareMessage(selectedCustomer)} 
+                                                className="bg-purple-100 text-purple-700 hover:bg-purple-200 px-3 py-2 rounded flex items-center transition shadow-sm border border-purple-200"
+                                            >
+                                                <Sparkles className="w-4 h-4 mr-2" /> 生成關懷簡訊
                                             </button>
-                                        )}
+                                            {isAdmin && (
+                                                <button onClick={() => openCustomerModal(selectedCustomer)} className="text-blue-600 hover:bg-blue-50 p-2 rounded">
+                                                    <Edit className="w-5 h-5"/>
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
                                         <div><span className="text-gray-500 block">電話</span> <span className="text-lg">{selectedCustomer.TEL}</span></div>
@@ -914,9 +1122,20 @@
                                         />
                                     </div>
                                 ))}
-                                <div className="col-span-2 md:col-span-4 mt-4 flex justify-end space-x-3">
-                                    <button type="button" onClick={() => setIsPrxModalOpen(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">取消</button>
-                                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                {/* AI Analyze Button (Only show in Edit/Add mode) */}
+                                <div className="col-span-2 md:col-span-4 flex items-center justify-between border-t pt-4 mt-2">
+                                     <button 
+                                        type="button" 
+                                        onClick={handleAnalyzeVision}
+                                        className="text-purple-600 hover:bg-purple-50 px-3 py-2 rounded flex items-center text-sm font-semibold border border-purple-200 shadow-sm"
+                                    >
+                                        <Sparkles className="w-4 h-4 mr-2" /> AI 鏡片建議
+                                    </button>
+
+                                    <div className="flex space-x-3">
+                                        <button type="button" onClick={() => setIsPrxModalOpen(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">取消</button>
+                                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                    </div>
                                 </div>
                             </form>
                         </Modal>
