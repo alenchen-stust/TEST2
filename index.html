@@ -571,19 +571,58 @@
             // --- Admin: System Setup & User Management ---
             const initializeAdmin = async () => {
                 if (!user) return;
-                const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
-                const snapshot = await getDocs(usersRef);
-                if (!snapshot.empty) {
-                    showMsg('系統已有管理員', 'error');
-                    return;
+                
+                // 加入確認對話框
+                if (!confirm(`確定要將目前帳號 (${user.email}) 設為系統管理員嗎？`)) return;
+
+                try {
+                    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                    const snapshot = await getDocs(usersRef);
+                    
+                    // 檢查自己是否已經在名單中
+                    const myUserDoc = snapshot.docs.find(d => d.data().email === user.email);
+
+                    if (myUserDoc) {
+                        const userData = myUserDoc.data();
+                        if (userData.role === 'admin') {
+                            alert('您已經是管理員了！(請嘗試重新整理頁面)');
+                            setIsAdmin(true);
+                        } else {
+                            // 如果存在但不是管理員，嘗試升級
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUserDoc.id), {
+                                role: 'admin'
+                            });
+                            setIsAdmin(true);
+                            alert('成功！已將您的權限提升為「管理員」。');
+                        }
+                        return;
+                    }
+
+                    // 檢查是否已有其他管理員
+                    if (!snapshot.empty) {
+                        const admins = snapshot.docs
+                            .filter(d => d.data().role === 'admin')
+                            .map(d => d.data().email);
+                        
+                        if (admins.length > 0) {
+                            alert(`系統初始化失敗：目前已有管理員 (${admins.join(', ')})。\n\n基於安全考量，請聯繫現有管理員為您開通權限。`);
+                            return;
+                        }
+                    }
+
+                    // 若無管理員，則新增自己
+                    await addDoc(usersRef, {
+                        email: user.email,
+                        role: 'admin',
+                        addedAt: new Date().toISOString()
+                    });
+                    setIsAdmin(true);
+                    alert('系統初始化成功！您已成為第一位系統管理員。');
+                    
+                } catch (e) {
+                    console.error(e);
+                    alert('設定失敗：' + e.message + '\n\n請檢查瀏覽器 Console 獲取更多細節，或確認 Firebase 權限設定。');
                 }
-                await addDoc(usersRef, {
-                    email: user.email,
-                    role: 'admin',
-                    addedAt: new Date().toISOString()
-                });
-                setIsAdmin(true);
-                showMsg('您已成為系統管理員', 'success');
             };
 
             const fetchSystemUsers = async () => {
