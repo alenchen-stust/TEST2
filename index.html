@@ -74,6 +74,7 @@
         const FileText = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></Icon>;
         const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></Icon>;
         const MessageSquare = (props) => <Icon {...props}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></Icon>;
+        const Lock = (props) => <Icon {...props}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></Icon>;
 
         // --- Firebase Configuration ---
         const firebaseConfig = {
@@ -218,6 +219,7 @@
         const App = () => {
             const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
+            const [userRole, setUserRole] = useState(null); // 'admin', 'user', 'pending'
             const [loading, setLoading] = useState(true);
             const [activeTab, setActiveTab] = useState('search');
             
@@ -226,8 +228,11 @@
             
             // Data State
             const [customers, setCustomers] = useState([]);
+            const [allPrescriptions, setAllPrescriptions] = useState([]); // 2. 儲存所有驗光資料
             const [filteredCustomers, setFilteredCustomers] = useState([]);
             const [selectedCustomer, setSelectedCustomer] = useState(null);
+            
+            // Derived State for Detail View
             const [customerPrescriptions, setCustomerPrescriptions] = useState([]);
             
             // Search State
@@ -255,52 +260,55 @@
                 const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
-                        // Check Admin Status in 'sys_users' collection
                         const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
                         
                         // Hardcoded Predefined Admins
                         const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
 
+                        // 1. Auto-register user if not exists (Fix for missing users in list)
                         try {
                             const snapshot = await getDocs(adminRef);
                             const allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                             const myUser = allUsers.find(u => u.email === currentUser.email);
                             
-                            // Special Logic: Automatically grant admin if email is in predefined list
+                            let currentRole = 'pending'; // Default role for new users
+
+                            // If predefined admin, force admin role
                             if (PREDEFINED_ADMINS.includes(currentUser.email)) {
-                                setIsAdmin(true);
-                                
-                                // Sync to DB if missing or not admin
-                                if (!myUser) {
-                                    await addDoc(adminRef, {
-                                        email: currentUser.email,
-                                        role: 'admin',
-                                        addedAt: new Date().toISOString()
-                                    });
-                                    console.log("Auto-registered predefined admin:", currentUser.email);
-                                } else if (myUser.role !== 'admin') {
-                                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), {
-                                        role: 'admin'
-                                    });
-                                    console.log("Upgraded user to admin:", currentUser.email);
-                                }
-                            } else {
-                                // Normal check for other users
-                                if (myUser && myUser.role === 'admin') {
-                                    setIsAdmin(true);
-                                } else {
-                                    setIsAdmin(false);
-                                }
+                                currentRole = 'admin';
+                            } else if (myUser) {
+                                // If user exists, use their role
+                                currentRole = myUser.role || 'pending'; // fallback to pending if role missing
                             }
+
+                            // Register or Update
+                            if (!myUser) {
+                                await addDoc(adminRef, {
+                                    email: currentUser.email,
+                                    role: currentRole,
+                                    addedAt: new Date().toISOString()
+                                });
+                                console.log(`Auto-registered new user as ${currentRole}:`, currentUser.email);
+                            } else if (PREDEFINED_ADMINS.includes(currentUser.email) && myUser.role !== 'admin') {
+                                // Force update predefined admin
+                                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' });
+                            }
+
+                            // Set App State
+                            setUserRole(currentRole);
+                            setIsAdmin(currentRole === 'admin');
+
                         } catch (err) {
                             console.error("Error checking admin status:", err);
                             if (err.code === 'permission-denied') {
-                                console.log("Permission denied when checking admin status. Likely due to Firestore rules.");
+                                console.log("Permission denied when checking admin status.");
                             }
                         }
                     } else {
                         setIsAdmin(false);
+                        setUserRole(null);
                         setCustomers([]);
+                        setAllPrescriptions([]);
                         setSelectedCustomer(null);
                     }
                     setLoading(false);
@@ -310,45 +318,48 @@
 
             // --- Data Listeners (CMF) ---
             useEffect(() => {
-                if (!user) return;
+                if (!user || userRole === 'pending') return; // Block data access if pending
                 
                 setLoading(true);
-                // Fetch all customers - simpler for search in this demo context 
-                // In production with huge data, would use Firestore indexes/Algolia
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'CMF');
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setCustomers(data);
-                    // DO NOT set filteredCustomers here automatically anymore
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching customers:", error);
                     setLoading(false);
                 });
                 return () => unsubscribe();
-            }, [user]);
+            }, [user, userRole]);
 
-            // --- Data Listeners (PRXMF for selected customer) ---
+            // --- Data Listeners (PRXMF - Fetch All for Counts & Robust Mapping) ---
             useEffect(() => {
-                if (!user || !selectedCustomer) {
-                    setCustomerPrescriptions([]);
-                    return;
-                }
+                if (!user || userRole === 'pending') return; // Block data access if pending
 
-                const q = query(
-                    collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF'), 
-                    where('CID1', '==', selectedCustomer.CID1)
-                );
-                
+                // 2. Fetch ALL prescriptions to allow counting and robust linking
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF');
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // Sort by DATE desc in memory
-                    data.sort((a, b) => new Date(b.DATE) - new Date(a.DATE));
-                    setCustomerPrescriptions(data);
+                    setAllPrescriptions(data);
                 }, (error) => console.error(error));
                 
                 return () => unsubscribe();
-            }, [selectedCustomer, user]);
+            }, [user, userRole]);
+
+            // --- Update Customer Prescriptions when selected ---
+            useEffect(() => {
+                if (selectedCustomer && allPrescriptions.length > 0) {
+                    // 3. Robust Linking: Compare as strings and trim whitespace
+                    const matches = allPrescriptions.filter(p => 
+                        String(p.CID1).trim() === String(selectedCustomer.CID1).trim()
+                    );
+                    matches.sort((a, b) => new Date(b.DATE) - new Date(a.DATE));
+                    setCustomerPrescriptions(matches);
+                } else {
+                    setCustomerPrescriptions([]);
+                }
+            }, [selectedCustomer, allPrescriptions]);
 
 
             // --- Actions: Login/Logout ---
@@ -360,22 +371,16 @@
                 } catch (error) {
                     console.error("Login Error:", error);
                     if (error.code === 'auth/unauthorized-domain') {
-                        // 智慧解析網域：處理 blob URL 或是標準 URL
                         let domainToAuthorize = window.location.hostname;
-                        
-                        // 如果是 blob 開頭 (預覽環境常見)，需要手動解析
                         if (window.location.protocol === 'blob:') {
                             try {
-                                // 移除 blob: 前綴，將其餘部分視為網址來解析
                                 const cleanUrl = window.location.href.replace('blob:', '');
                                 const urlObj = new URL(cleanUrl);
                                 domainToAuthorize = urlObj.hostname;
                             } catch (e) {
-                                console.error("解析 blob 網域失敗", e);
                                 domainToAuthorize = "無法自動解析，請參考下方完整網址";
                             }
                         }
-
                         setAuthError({
                             type: 'domain',
                             domain: domainToAuthorize,
@@ -401,29 +406,23 @@
                 const lowerName = NAME.toLowerCase();
                 const lowerAddr = ADDRESS.toLowerCase();
 
-                // Filter Logic: "Any condition" means if a user fills multiple, do we assume AND or OR?
-                // Usually search forms implies AND logic for filled fields (narrowing down).
-                // But requirement says "任一條件搜尋條件都可以搜尋" (Search with ANY condition). 
-                // This usually means "I can use Name OR Tel OR ID".
-                // If user fills TWO fields, typically it means "Match BOTH".
-                // I will keep the AND logic for *filled* fields, which satisfies "can use any condition to search".
-                
                 const filtered = customers.filter(c => {
                     const matchCID = CID1 ? String(c.CID1).includes(CID1) : true;
                     const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(lowerName) : true;
                     const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
                     const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(lowerAddr) : true;
                     const matchBirth = BIRDATE ? c.BIRDATE === BIRDATE : true;
-                    
-                    // Ensure at least one criteria is entered? Or if all empty show all?
-                    // "等使用者按下搜尋按鈕後再顯示客戶列表" -> implied empty initially.
-                    // If all search fields are empty, maybe show all? Or show none?
-                    // Let's assume show all if empty, but only after click.
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
                 
                 setFilteredCustomers(filtered);
                 setHasSearched(true);
+            };
+
+            // --- Helper: Get Prescription Count ---
+            const getPrxCount = (cid1) => {
+                if (!cid1) return 0;
+                return allPrescriptions.filter(p => String(p.CID1).trim() === String(cid1).trim()).length;
             };
 
             // --- Actions: AI Features ---
@@ -487,10 +486,8 @@
             const saveCustomer = async () => {
                 if (!isAdmin) return;
                 const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'CMF');
-                
                 try {
                     if (mode === 'add') {
-                        // Check duplicate CID1
                         if (customers.some(c => c.CID1 === editingData.CID1)) {
                             alert('客戶編號已存在');
                             return;
@@ -503,7 +500,6 @@
                     }
                     setIsCustomerModalOpen(false);
                     showMsg('客戶資料儲存成功', 'success');
-                    // Refresh search results if in search view
                     if (hasSearched) handleSearch(); 
                 } catch (e) {
                     console.error(e);
@@ -517,12 +513,9 @@
 
             const deleteCustomer = async (id, cid1) => {
                 if (!isAdmin || !confirm('確定要刪除此客戶及其所有驗光資料嗎？')) return;
-                
                 try {
-                    // 1. Delete Customer
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'CMF', id));
-                    
-                    // 2. Delete linked Prescriptions (Client-side simulation since we can't use cloud functions)
+                    // 刪除關聯的 PRXMF
                     const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF'), where('CID1', '==', cid1));
                     const snapshot = await getDocs(q);
                     const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
@@ -530,17 +523,10 @@
                     
                     if (selectedCustomer?.id === id) setSelectedCustomer(null);
                     showMsg('刪除成功', 'success');
-                    // Refresh search if active
-                    if (hasSearched) {
-                        setFilteredCustomers(prev => prev.filter(c => c.id !== id));
-                    }
+                    if (hasSearched) setFilteredCustomers(prev => prev.filter(c => c.id !== id));
                 } catch (e) {
                     console.error(e);
-                    if (e.code === 'permission-denied') {
-                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
-                    } else {
-                        showMsg('刪除失敗', 'error');
-                    }
+                    showMsg('刪除失敗', 'error');
                 }
             };
 
@@ -565,7 +551,6 @@
             const savePrx = async () => {
                 if (!isAdmin) return;
                 const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF');
-                
                 try {
                     if (mode === 'add') {
                         await addDoc(colRef, editingData);
@@ -575,21 +560,14 @@
                         await updateDoc(docRef, updateData);
                     }
                     setIsPrxModalOpen(false);
-                    
-                    // Update Last Date in CMF
                     if (selectedCustomer && editingData.DATE) {
                          const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'CMF', selectedCustomer.id);
                          await updateDoc(customerRef, { LASTD: editingData.DATE });
                     }
-                    
                     showMsg('驗光資料儲存成功', 'success');
                 } catch (e) {
                     console.error(e);
-                    if (e.code === 'permission-denied') {
-                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
-                    } else {
-                        showMsg('儲存失敗', 'error');
-                    }
+                    showMsg('儲存失敗', 'error');
                 }
             };
 
@@ -599,11 +577,7 @@
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', id));
                     showMsg('刪除成功', 'success');
                 } catch(e) {
-                    if (e.code === 'permission-denied') {
-                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
-                    } else {
-                        showMsg('刪除失敗', 'error');
-                    }
+                    showMsg('刪除失敗', 'error');
                 }
             };
 
@@ -611,56 +585,42 @@
             // --- Admin: System Setup & User Management ---
             const initializeAdmin = async () => {
                 if (!user) return;
-                
                 if (!confirm(`確定要將目前帳號 (${user.email}) 設為系統管理員嗎？`)) return;
-
                 try {
                     const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
                     const snapshot = await getDocs(usersRef);
-                    
                     const myUserDoc = snapshot.docs.find(d => d.data().email === user.email);
 
                     if (myUserDoc) {
                         const userData = myUserDoc.data();
                         if (userData.role === 'admin') {
-                            alert('您已經是管理員了！(請嘗試重新整理頁面)');
+                            alert('您已經是管理員了！');
                             setIsAdmin(true);
                         } else {
-                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUserDoc.id), {
-                                role: 'admin'
-                            });
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUserDoc.id), { role: 'admin' });
                             setIsAdmin(true);
                             alert('成功！已將您的權限提升為「管理員」。');
                         }
                         return;
                     }
-
                     if (!snapshot.empty) {
-                        const admins = snapshot.docs
-                            .filter(d => d.data().role === 'admin')
-                            .map(d => d.data().email);
-                        
+                        const admins = snapshot.docs.filter(d => d.data().role === 'admin');
                         if (admins.length > 0) {
-                            alert(`系統初始化失敗：目前已有管理員 (${admins.join(', ')})。\n\n基於安全考量，請聯繫現有管理員為您開通權限。`);
+                            alert(`系統初始化失敗：目前已有管理員。`);
                             return;
                         }
                     }
-
                     await addDoc(usersRef, {
                         email: user.email,
                         role: 'admin',
                         addedAt: new Date().toISOString()
                     });
                     setIsAdmin(true);
-                    alert('系統初始化成功！您已成為第一位系統管理員。');
-                    
+                    alert('系統初始化成功！');
                 } catch (e) {
                     console.error(e);
-                    if (e.code === 'permission-denied') {
-                        alert('【權限不足 (permission-denied)】\n\n這是因為 Firebase 資料庫的安全規則預設是鎖住的。\n\n請依照以下步驟開啟權限：\n1. 前往 Firebase Console (console.firebase.google.com)\n2. 點選 Build > Firestore Database > Rules (規則)\n3. 將 allow read, write 行修改為：\n   allow read, write: if request.auth != null;\n4. 點擊 Publish (發布)');
-                    } else {
-                        alert('設定失敗：' + e.message + '\n\n請檢查瀏覽器 Console 獲取更多細節。');
-                    }
+                    if (e.code === 'permission-denied') alert('權限不足，請檢查 Firebase 規則。');
+                    else alert('設定失敗：' + e.message);
                 }
             };
 
@@ -686,11 +646,9 @@
 
             const updateUserRole = async (id, newRole) => {
                 try {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {
-                        role: newRole
-                    });
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), { role: newRole });
                     showMsg('權限修改成功', 'success');
-                    fetchSystemUsers(); // Refresh list
+                    fetchSystemUsers();
                 } catch (e) {
                     console.error(e);
                     showMsg('權限修改失敗', 'error');
@@ -699,7 +657,7 @@
 
             // --- CSV Import/Export ---
             const exportCSV = (type) => {
-                const data = type === 'CMF' ? customers : customerPrescriptions; 
+                const data = type === 'CMF' ? customers : allPrescriptions; 
                 if (data.length === 0) { alert('無資料可匯出'); return; }
                 
                 const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key);
@@ -728,7 +686,7 @@
                 const file = e.target.files[0];
                 if (!file) return;
                 
-                setLoading(true); // Start loading
+                setLoading(true);
                 const reader = new FileReader();
                 reader.onload = async (evt) => {
                     try {
@@ -750,16 +708,13 @@
                             await addDoc(colRef, d);
                             count++;
                         }
-                        
-                        // Show success message after completion
                         showMsg(`成功匯入 ${count} 筆資料`, 'success'); 
-                        // Reset file input to allow re-importing same file if needed
                         e.target.value = ''; 
                     } catch (err) {
                         console.error(err);
                         showMsg('匯入過程發生錯誤', 'error');
                     } finally {
-                        setLoading(false); // Stop loading
+                        setLoading(false);
                     }
                 };
                 reader.readAsText(file);
@@ -775,37 +730,15 @@
             if (!user) {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
-                        {/* Error Modal ... (Auth Error Modal code) ... */}
+                        {/* Auth Error Modal */}
                         {authError && authError.type === 'domain' && (
                             <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
                                 <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
-                                    <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">
-                                        ⚠️ 網域授權錯誤 (auth/unauthorized-domain)
-                                    </h3>
-                                    <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
-                                        <p className="text-red-700 text-sm font-bold mb-1">Firebase 拒絕了登入請求。</p>
-                                        <p className="text-red-600 text-xs">因為您目前的預覽環境網域不在白名單內。</p>
-                                    </div>
-                                    <div className="space-y-4 mb-6">
-                                        <div>
-                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">請複製此網域 (貼到 Firebase)</label>
-                                            <div className="bg-gray-100 p-3 rounded text-lg font-mono border-2 border-blue-200 text-blue-800 select-all break-all">
-                                                {authError.domain}
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs text-gray-400 mb-1 uppercase">當前完整網址 (參考用)</label>
-                                            <div className="bg-gray-50 p-2 rounded text-xs font-mono text-gray-500 break-all border border-gray-200">
-                                                {authError.fullUrl}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <p className="text-sm text-gray-600 mb-6">
-                                        請前往 <strong>Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains</strong>，點擊「Add domain」並貼上上方的網域。
-                                    </p>
+                                    <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">⚠️ 網域授權錯誤</h3>
+                                    <div className="bg-gray-100 p-3 rounded text-lg font-mono border-2 border-blue-200 text-blue-800 select-all break-all mb-4">{authError.domain}</div>
                                     <div className="flex justify-end space-x-3">
-                                        <button onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製網域');}} className="px-4 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-semibold">複製網域</button>
-                                        <button onClick={() => setAuthError(null)} className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition">關閉視窗</button>
+                                        <button onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製網域');}} className="px-4 py-2 bg-blue-100 text-blue-700 rounded">複製網域</button>
+                                        <button onClick={() => setAuthError(null)} className="px-4 py-2 bg-gray-600 text-white rounded">關閉視窗</button>
                                     </div>
                                 </div>
                             </div>
@@ -823,12 +756,8 @@
                             <Eye className="w-16 h-16 mx-auto text-blue-600 mb-4" />
                             <h1 className="text-2xl font-bold mb-2 text-gray-800">鐘錶眼鏡客戶管理系統</h1>
                             <p className="text-gray-500 mb-6">請登入以存取系統</p>
-                            <button 
-                                onClick={handleGoogleLogin}
-                                className="w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 rounded flex items-center justify-center hover:bg-gray-50 transition shadow-sm"
-                            >
-                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" />
-                                使用 Google 帳號登入
+                            <button onClick={handleGoogleLogin} className="w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 rounded flex items-center justify-center hover:bg-gray-50 transition shadow-sm">
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" /> 使用 Google 帳號登入
                             </button>
                         </div>
                     </div>
@@ -837,7 +766,7 @@
 
             return (
                 <div className="min-h-screen flex flex-col relative">
-                    {/* Loading Overlay for AI/Import */}
+                    {/* Loading Overlay */}
                     {(isAiLoading || loading) && (
                         <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
                              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
@@ -860,6 +789,7 @@
                                     <User className="w-4 h-4 mr-1" />
                                     {user.displayName || user.email}
                                     {isAdmin && <span className="ml-2 bg-yellow-500 text-blue-900 text-xs px-2 py-0.5 rounded-full font-bold">管理員</span>}
+                                    {userRole === 'pending' && <span className="ml-2 bg-gray-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">未授權</span>}
                                 </div>
                                 <button onClick={handleLogout} className="text-blue-200 hover:text-white">
                                     <LogOut className="w-5 h-5" />
@@ -878,9 +808,7 @@
                                 客戶查詢
                             </button>
                             {selectedCustomer && (
-                                <button 
-                                    className={`px-6 py-3 border-b-2 font-medium border-blue-600 text-blue-600`}
-                                >
+                                <button className={`px-6 py-3 border-b-2 font-medium border-blue-600 text-blue-600`}>
                                     {selectedCustomer.NAME} 的資料
                                 </button>
                             )}
@@ -905,8 +833,20 @@
                     {/* Main Content */}
                     <main className="flex-1 container mx-auto p-4 overflow-y-auto">
                         
+                        {/* Unauthorized View */}
+                        {userRole === 'pending' && (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                <Lock className="w-16 h-16 mb-4 text-gray-400" />
+                                <h2 className="text-2xl font-bold text-gray-700 mb-2">帳號審核中</h2>
+                                <p className="mb-4 text-center max-w-md">您的帳號目前尚未取得授權，無法使用查詢功能。<br/>請聯繫系統管理員為您開通權限。</p>
+                                <div className="bg-gray-100 p-4 rounded border border-gray-200 text-sm">
+                                    <span className="font-bold">您的帳號：</span> {user.email}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Search View */}
-                        {activeTab === 'search' && !selectedCustomer && (
+                        {activeTab === 'search' && !selectedCustomer && userRole !== 'pending' && (
                             <div className="space-y-6">
                                 <div className="bg-white p-4 rounded shadow">
                                     <h2 className="text-lg font-semibold mb-4 flex items-center"><Search className="w-5 h-5 mr-2"/> 搜尋條件</h2>
@@ -916,10 +856,7 @@
                                         <input placeholder="電話" className="border p-2 rounded" value={searchCriteria.TEL} onChange={e => setSearchCriteria({...searchCriteria, TEL: e.target.value})} />
                                         <input placeholder="地址" className="border p-2 rounded" value={searchCriteria.ADDRESS} onChange={e => setSearchCriteria({...searchCriteria, ADDRESS: e.target.value})} />
                                         <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e => setSearchCriteria({...searchCriteria, BIRDATE: e.target.value})} />
-                                        <button 
-                                            onClick={handleSearch}
-                                            className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded flex justify-center items-center shadow"
-                                        >
+                                        <button onClick={handleSearch} className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded flex justify-center items-center shadow">
                                             <Search className="w-5 h-5 mr-1" /> 搜尋
                                         </button>
                                     </div>
@@ -945,6 +882,7 @@
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">性別</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">生日</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">驗光筆數</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                                                     </tr>
                                                 </thead>
@@ -958,6 +896,11 @@
                                                             <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.SEX}</td>
                                                             <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.TEL}</td>
                                                             <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.BIRDATE}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-500 text-center">
+                                                                <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-bold">
+                                                                    {getPrxCount(c.CID1)}
+                                                                </span>
+                                                            </td>
                                                             <td className="px-4 py-3 whitespace-nowrap text-gray-500 flex space-x-2">
                                                                 <button onClick={() => setSelectedCustomer(c)} className="text-blue-600 hover:text-blue-800"><FileText className="w-4 h-4"/></button>
                                                                 {isAdmin && (
@@ -971,7 +914,7 @@
                                                     ))}
                                                     {filteredCustomers.length === 0 && (
                                                         <tr>
-                                                            <td colSpan="6" className="text-center py-8 text-gray-400">無符合搜尋條件的資料</td>
+                                                            <td colSpan="7" className="text-center py-8 text-gray-400">無符合搜尋條件的資料</td>
                                                         </tr>
                                                     )}
                                                 </tbody>
@@ -1022,7 +965,7 @@
                                     </div>
                                 </div>
 
-                                {/* Prescriptions List (Requirement 4: Displayed below details) */}
+                                {/* Prescriptions List */}
                                 <div className="bg-white p-4 rounded shadow">
                                     <div className="flex justify-between items-center mb-4 border-b pb-2">
                                         <h3 className="text-xl font-bold text-gray-700 flex items-center"><Database className="w-5 h-5 mr-2"/> 驗光紀錄</h3>
@@ -1131,7 +1074,7 @@
                                 </div>
 
                                 <div className="bg-white p-6 rounded shadow">
-                                    <h2 className="text-lg font-bold mb-4">使用者權限管理 (Requirement 1)</h2>
+                                    <h2 className="text-lg font-bold mb-4">使用者權限管理</h2>
                                     <div className="flex gap-2 mb-4">
                                         <input type="email" id="new-user-email" placeholder="輸入使用者 Email" className="border p-2 rounded flex-1" />
                                         <button onClick={() => {
@@ -1146,8 +1089,11 @@
                                                 <div>
                                                     <span className="font-medium">{u.email}</span>
                                                     {/* Show current role badge */}
-                                                    <span className={`ml-2 text-xs px-2 py-1 rounded ${u.role === 'admin' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>
-                                                        {u.role === 'admin' ? '管理員' : '一般使用者'}
+                                                    <span className={`ml-2 text-xs px-2 py-1 rounded ${
+                                                        u.role === 'admin' ? 'bg-yellow-100 text-yellow-800' : 
+                                                        u.role === 'pending' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                                                    }`}>
+                                                        {u.role === 'admin' ? '管理員' : u.role === 'pending' ? '未授權' : '一般使用者'}
                                                     </span>
                                                 </div>
                                                 
@@ -1158,6 +1104,7 @@
                                                         onChange={(e) => updateUserRole(u.id, e.target.value)}
                                                         className="border rounded p-1 text-sm bg-white"
                                                     >
+                                                        <option value="pending">未授權</option>
                                                         <option value="user">一般使用者</option>
                                                         <option value="admin">管理員</option>
                                                     </select>
