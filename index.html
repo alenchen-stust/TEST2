@@ -534,9 +534,11 @@
             const openPrxModal = (prx = null) => {
                 if (!selectedCustomer) return;
                 if (prx) {
+                    // 編輯模式：載入點選的驗光資料
                     setMode('edit');
                     setEditingData({ ...prx });
                 } else {
+                    // 新增模式：預設帶入客戶基本資料
                     setMode('add');
                     setEditingData({ 
                         CID1: selectedCustomer.CID1,
@@ -551,33 +553,51 @@
             const savePrx = async () => {
                 if (!isAdmin) return;
                 const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF');
+                
                 try {
                     if (mode === 'add') {
                         await addDoc(colRef, editingData);
+                        showMsg('新增驗光資料成功', 'success');
                     } else {
+                        // 編輯模式：更新現有文件 (需確保有 ID)
+                        if (!editingData.id) throw new Error("資料 ID 遺失");
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', editingData.id);
-                        const { id, ...updateData } = editingData;
+                        const { id, ...updateData } = editingData; // 排除 ID 欄位避免重複寫入
                         await updateDoc(docRef, updateData);
+                        showMsg('修改驗光資料成功', 'success');
                     }
                     setIsPrxModalOpen(false);
+                    
+                    // 同步更新客戶資料表的「最後光臨日期」
                     if (selectedCustomer && editingData.DATE) {
                          const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'CMF', selectedCustomer.id);
                          await updateDoc(customerRef, { LASTD: editingData.DATE });
                     }
-                    showMsg('驗光資料儲存成功', 'success');
+                    
                 } catch (e) {
                     console.error(e);
-                    showMsg('儲存失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】請檢查 Firebase 規則。');
+                    } else {
+                        showMsg('儲存失敗: ' + e.message, 'error');
+                    }
                 }
             };
 
             const deletePrx = async (id) => {
-                if (!isAdmin || !confirm('確定刪除此筆驗光紀錄？')) return;
+                if (!isAdmin) return;
+                if (!confirm('確定要永久刪除此筆驗光紀錄嗎？\n此動作無法復原。')) return;
+                
                 try {
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', id));
                     showMsg('刪除成功', 'success');
                 } catch(e) {
-                    showMsg('刪除失敗', 'error');
+                    console.error(e);
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】請檢查 Firebase 規則。');
+                    } else {
+                        showMsg('刪除失敗', 'error');
+                    }
                 }
             };
 
@@ -982,9 +1002,22 @@
                                                 <div className="flex justify-between items-center mb-2">
                                                     <div className="font-bold text-lg text-blue-800">{prx.DATE}</div>
                                                     {isAdmin && (
-                                                        <div className="flex space-x-2">
-                                                            <button onClick={() => openPrxModal(prx)} className="p-1 text-gray-500 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
-                                                            <button onClick={() => deletePrx(prx.id)} className="p-1 text-gray-500 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                                        <div className="flex space-x-2 bg-gray-50 p-1 rounded border">
+                                                            <button 
+                                                                onClick={() => openPrxModal(prx)} 
+                                                                className="p-2 text-blue-600 hover:bg-white hover:shadow-sm rounded transition flex items-center"
+                                                                title="編輯此紀錄"
+                                                            >
+                                                                <Edit className="w-4 h-4 mr-1"/> <span className="text-xs">編輯</span>
+                                                            </button>
+                                                            <div className="w-px bg-gray-300 mx-1"></div>
+                                                            <button 
+                                                                onClick={() => deletePrx(prx.id)} 
+                                                                className="p-2 text-red-600 hover:bg-white hover:shadow-sm rounded transition flex items-center"
+                                                                title="刪除此紀錄"
+                                                            >
+                                                                <Trash2 className="w-4 h-4 mr-1"/> <span className="text-xs">刪除</span>
+                                                            </button>
                                                         </div>
                                                     )}
                                                 </div>
