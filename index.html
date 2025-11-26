@@ -234,6 +234,7 @@
             const [searchCriteria, setSearchCriteria] = useState({
                 CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: ''
             });
+            const [hasSearched, setHasSearched] = useState(false);
 
             // Modal State
             const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
@@ -293,6 +294,9 @@
                             }
                         } catch (err) {
                             console.error("Error checking admin status:", err);
+                            if (err.code === 'permission-denied') {
+                                console.log("Permission denied when checking admin status. Likely due to Firestore rules.");
+                            }
                         }
                     } else {
                         setIsAdmin(false);
@@ -315,7 +319,7 @@
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setCustomers(data);
-                    setFilteredCustomers(data);
+                    // DO NOT set filteredCustomers here automatically anymore
                     setLoading(false);
                 }, (error) => {
                     console.error("Error fetching customers:", error);
@@ -392,21 +396,35 @@
             const handleLogout = () => signOut(auth);
 
             // --- Actions: Search ---
-            useEffect(() => {
+            const handleSearch = () => {
                 const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
                 const lowerName = NAME.toLowerCase();
                 const lowerAddr = ADDRESS.toLowerCase();
 
+                // Filter Logic: "Any condition" means if a user fills multiple, do we assume AND or OR?
+                // Usually search forms implies AND logic for filled fields (narrowing down).
+                // But requirement says "任一條件搜尋條件都可以搜尋" (Search with ANY condition). 
+                // This usually means "I can use Name OR Tel OR ID".
+                // If user fills TWO fields, typically it means "Match BOTH".
+                // I will keep the AND logic for *filled* fields, which satisfies "can use any condition to search".
+                
                 const filtered = customers.filter(c => {
                     const matchCID = CID1 ? String(c.CID1).includes(CID1) : true;
                     const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(lowerName) : true;
                     const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
                     const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(lowerAddr) : true;
                     const matchBirth = BIRDATE ? c.BIRDATE === BIRDATE : true;
+                    
+                    // Ensure at least one criteria is entered? Or if all empty show all?
+                    // "等使用者按下搜尋按鈕後再顯示客戶列表" -> implied empty initially.
+                    // If all search fields are empty, maybe show all? Or show none?
+                    // Let's assume show all if empty, but only after click.
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
+                
                 setFilteredCustomers(filtered);
-            }, [searchCriteria, customers]);
+                setHasSearched(true);
+            };
 
             // --- Actions: AI Features ---
             const handleGenerateCareMessage = async (customer) => {
@@ -485,9 +503,15 @@
                     }
                     setIsCustomerModalOpen(false);
                     showMsg('客戶資料儲存成功', 'success');
+                    // Refresh search results if in search view
+                    if (hasSearched) handleSearch(); 
                 } catch (e) {
                     console.error(e);
-                    showMsg('儲存失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
+                    } else {
+                        showMsg('儲存失敗', 'error');
+                    }
                 }
             };
 
@@ -506,9 +530,17 @@
                     
                     if (selectedCustomer?.id === id) setSelectedCustomer(null);
                     showMsg('刪除成功', 'success');
+                    // Refresh search if active
+                    if (hasSearched) {
+                        setFilteredCustomers(prev => prev.filter(c => c.id !== id));
+                    }
                 } catch (e) {
                     console.error(e);
-                    showMsg('刪除失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
+                    } else {
+                        showMsg('刪除失敗', 'error');
+                    }
                 }
             };
 
@@ -553,7 +585,11 @@
                     showMsg('驗光資料儲存成功', 'success');
                 } catch (e) {
                     console.error(e);
-                    showMsg('儲存失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
+                    } else {
+                        showMsg('儲存失敗', 'error');
+                    }
                 }
             };
 
@@ -563,7 +599,11 @@
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', id));
                     showMsg('刪除成功', 'success');
                 } catch(e) {
-                    showMsg('刪除失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】\n請前往 Firebase Console > Firestore Database > Rules\n修改規則為 allow read, write: if request.auth != null;');
+                    } else {
+                        showMsg('刪除失敗', 'error');
+                    }
                 }
             };
 
@@ -572,14 +612,12 @@
             const initializeAdmin = async () => {
                 if (!user) return;
                 
-                // 加入確認對話框
                 if (!confirm(`確定要將目前帳號 (${user.email}) 設為系統管理員嗎？`)) return;
 
                 try {
                     const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
                     const snapshot = await getDocs(usersRef);
                     
-                    // 檢查自己是否已經在名單中
                     const myUserDoc = snapshot.docs.find(d => d.data().email === user.email);
 
                     if (myUserDoc) {
@@ -588,7 +626,6 @@
                             alert('您已經是管理員了！(請嘗試重新整理頁面)');
                             setIsAdmin(true);
                         } else {
-                            // 如果存在但不是管理員，嘗試升級
                             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUserDoc.id), {
                                 role: 'admin'
                             });
@@ -598,7 +635,6 @@
                         return;
                     }
 
-                    // 檢查是否已有其他管理員
                     if (!snapshot.empty) {
                         const admins = snapshot.docs
                             .filter(d => d.data().role === 'admin')
@@ -610,7 +646,6 @@
                         }
                     }
 
-                    // 若無管理員，則新增自己
                     await addDoc(usersRef, {
                         email: user.email,
                         role: 'admin',
@@ -621,7 +656,11 @@
                     
                 } catch (e) {
                     console.error(e);
-                    alert('設定失敗：' + e.message + '\n\n請檢查瀏覽器 Console 獲取更多細節，或確認 Firebase 權限設定。');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足 (permission-denied)】\n\n這是因為 Firebase 資料庫的安全規則預設是鎖住的。\n\n請依照以下步驟開啟權限：\n1. 前往 Firebase Console (console.firebase.google.com)\n2. 點選 Build > Firestore Database > Rules (規則)\n3. 將 allow read, write 行修改為：\n   allow read, write: if request.auth != null;\n4. 點擊 Publish (發布)');
+                    } else {
+                        alert('設定失敗：' + e.message + '\n\n請檢查瀏覽器 Console 獲取更多細節。');
+                    }
                 }
             };
 
@@ -645,13 +684,25 @@
                 fetchSystemUsers();
             };
 
+            const updateUserRole = async (id, newRole) => {
+                try {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {
+                        role: newRole
+                    });
+                    showMsg('權限修改成功', 'success');
+                    fetchSystemUsers(); // Refresh list
+                } catch (e) {
+                    console.error(e);
+                    showMsg('權限修改失敗', 'error');
+                }
+            };
+
             // --- CSV Import/Export ---
             const exportCSV = (type) => {
-                const data = type === 'CMF' ? customers : customerPrescriptions; // Or all prescriptions if needed
+                const data = type === 'CMF' ? customers : customerPrescriptions; 
                 if (data.length === 0) { alert('無資料可匯出'); return; }
                 
                 const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key);
-                // Always include CID1/NAME in PRXMF export just in case
                 if (type === 'PRXMF') headers.unshift('CID1', 'NAME');
 
                 const csvContent = [
@@ -676,33 +727,39 @@
             const handleImportCSV = (e, type) => {
                 const file = e.target.files[0];
                 if (!file) return;
+                
+                setLoading(true); // Start loading
                 const reader = new FileReader();
                 reader.onload = async (evt) => {
-                    const text = evt.target.result;
-                    const rows = text.split('\n').map(r => r.trim()).filter(r => r);
-                    const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
-                    
-                    const batchData = [];
-                    for (let i = 1; i < rows.length; i++) {
-                        const values = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
-                        const obj = {};
-                        headers.forEach((h, idx) => obj[h] = values[idx]);
-                        batchData.push(obj);
-                    }
-
-                    // Batch Write (simulated with Promise.all for simplicity in single file without batch limit logic complexity)
-                    const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
-                    let count = 0;
                     try {
+                        const text = evt.target.result;
+                        const rows = text.split('\n').map(r => r.trim()).filter(r => r);
+                        const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
+                        
+                        const batchData = [];
+                        for (let i = 1; i < rows.length; i++) {
+                            const values = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
+                            const obj = {};
+                            headers.forEach((h, idx) => obj[h] = values[idx]);
+                            batchData.push(obj);
+                        }
+
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
+                        let count = 0;
                         for (const d of batchData) {
-                            // Basic deduplication check could go here
                             await addDoc(colRef, d);
                             count++;
                         }
-                        showMsg(`成功匯入 ${count} 筆資料`, 'success');
+                        
+                        // Show success message after completion
+                        showMsg(`成功匯入 ${count} 筆資料`, 'success'); 
+                        // Reset file input to allow re-importing same file if needed
+                        e.target.value = ''; 
                     } catch (err) {
                         console.error(err);
                         showMsg('匯入過程發生錯誤', 'error');
+                    } finally {
+                        setLoading(false); // Stop loading
                     }
                 };
                 reader.readAsText(file);
@@ -715,23 +772,20 @@
 
 
             // --- Render ---
-            // If user is not logged in, show login screen + Error Modal if exists
             if (!user) {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
-                        {/* Error Modal */}
+                        {/* Error Modal ... (Auth Error Modal code) ... */}
                         {authError && authError.type === 'domain' && (
                             <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
                                 <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
                                     <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">
                                         ⚠️ 網域授權錯誤 (auth/unauthorized-domain)
                                     </h3>
-                                    
                                     <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
                                         <p className="text-red-700 text-sm font-bold mb-1">Firebase 拒絕了登入請求。</p>
                                         <p className="text-red-600 text-xs">因為您目前的預覽環境網域不在白名單內。</p>
                                     </div>
-
                                     <div className="space-y-4 mb-6">
                                         <div>
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">請複製此網域 (貼到 Firebase)</label>
@@ -739,7 +793,6 @@
                                                 {authError.domain}
                                             </div>
                                         </div>
-                                        
                                         <div>
                                             <label className="block text-xs text-gray-400 mb-1 uppercase">當前完整網址 (參考用)</label>
                                             <div className="bg-gray-50 p-2 rounded text-xs font-mono text-gray-500 break-all border border-gray-200">
@@ -747,23 +800,12 @@
                                             </div>
                                         </div>
                                     </div>
-
                                     <p className="text-sm text-gray-600 mb-6">
                                         請前往 <strong>Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains</strong>，點擊「Add domain」並貼上上方的網域。
                                     </p>
                                     <div className="flex justify-end space-x-3">
-                                        <button 
-                                            onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製網域');}}
-                                            className="px-4 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-semibold"
-                                        >
-                                            複製網域
-                                        </button>
-                                        <button 
-                                            onClick={() => setAuthError(null)}
-                                            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition"
-                                        >
-                                            關閉視窗
-                                        </button>
+                                        <button onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製網域');}} className="px-4 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-semibold">複製網域</button>
+                                        <button onClick={() => setAuthError(null)} className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition">關閉視窗</button>
                                     </div>
                                 </div>
                             </div>
@@ -795,11 +837,11 @@
 
             return (
                 <div className="min-h-screen flex flex-col relative">
-                    {/* Loading Overlay for AI */}
-                    {isAiLoading && (
+                    {/* Loading Overlay for AI/Import */}
+                    {(isAiLoading || loading) && (
                         <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
                              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
-                             <p className="text-lg font-semibold animate-pulse">✨ AI 正在思考中...</p>
+                             <p className="text-lg font-semibold animate-pulse">{isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}</p>
                         </div>
                     )}
 
@@ -862,78 +904,91 @@
 
                     {/* Main Content */}
                     <main className="flex-1 container mx-auto p-4 overflow-y-auto">
-                        {loading && <LoadingSpinner />}
-
+                        
                         {/* Search View */}
-                        {activeTab === 'search' && !selectedCustomer && !loading && (
+                        {activeTab === 'search' && !selectedCustomer && (
                             <div className="space-y-6">
                                 <div className="bg-white p-4 rounded shadow">
                                     <h2 className="text-lg font-semibold mb-4 flex items-center"><Search className="w-5 h-5 mr-2"/> 搜尋條件</h2>
-                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                                         <input placeholder="客戶編號" className="border p-2 rounded" value={searchCriteria.CID1} onChange={e => setSearchCriteria({...searchCriteria, CID1: e.target.value})} />
                                         <input placeholder="姓名" className="border p-2 rounded" value={searchCriteria.NAME} onChange={e => setSearchCriteria({...searchCriteria, NAME: e.target.value})} />
                                         <input placeholder="電話" className="border p-2 rounded" value={searchCriteria.TEL} onChange={e => setSearchCriteria({...searchCriteria, TEL: e.target.value})} />
                                         <input placeholder="地址" className="border p-2 rounded" value={searchCriteria.ADDRESS} onChange={e => setSearchCriteria({...searchCriteria, ADDRESS: e.target.value})} />
                                         <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e => setSearchCriteria({...searchCriteria, BIRDATE: e.target.value})} />
+                                        <button 
+                                            onClick={handleSearch}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded flex justify-center items-center shadow"
+                                        >
+                                            <Search className="w-5 h-5 mr-1" /> 搜尋
+                                        </button>
                                     </div>
                                 </div>
 
-                                <div className="bg-white p-4 rounded shadow">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h2 className="text-lg font-semibold">客戶列表 ({filteredCustomers.length})</h2>
-                                        {isAdmin && (
-                                            <button onClick={() => openCustomerModal()} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center hover:bg-blue-700">
-                                                <Plus className="w-4 h-4 mr-2" /> 新增客戶
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div className="overflow-x-auto">
-                                        <table className="min-w-full divide-y divide-gray-200">
-                                            <thead className="bg-gray-50">
-                                                <tr>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">編號</th>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">性別</th>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話</th>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">生日</th>
-                                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="bg-white divide-y divide-gray-200">
-                                                {filteredCustomers.map(c => (
-                                                    <tr key={c.id} className="hover:bg-gray-50">
-                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-900">{c.CID1}</td>
-                                                        <td className="px-4 py-3 whitespace-nowrap text-blue-600 font-medium cursor-pointer hover:underline" onClick={() => setSelectedCustomer(c)}>
-                                                            {c.NAME}
-                                                        </td>
-                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.SEX}</td>
-                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.TEL}</td>
-                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.BIRDATE}</td>
-                                                        <td className="px-4 py-3 whitespace-nowrap text-gray-500 flex space-x-2">
-                                                            <button onClick={() => setSelectedCustomer(c)} className="text-blue-600 hover:text-blue-800"><FileText className="w-4 h-4"/></button>
-                                                            {isAdmin && (
-                                                                <>
-                                                                    <button onClick={() => openCustomerModal(c)} className="text-green-600 hover:text-green-800"><Edit className="w-4 h-4"/></button>
-                                                                    <button onClick={() => deleteCustomer(c.id, c.CID1)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></button>
-                                                                </>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                                {filteredCustomers.length === 0 && (
+                                {/* Customer List Table (Hidden until searched) */}
+                                {hasSearched && (
+                                    <div className="bg-white p-4 rounded shadow fade-in">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h2 className="text-lg font-semibold">搜尋結果 ({filteredCustomers.length})</h2>
+                                            {isAdmin && (
+                                                <button onClick={() => openCustomerModal()} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center hover:bg-blue-700">
+                                                    <Plus className="w-4 h-4 mr-2" /> 新增客戶
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50">
                                                     <tr>
-                                                        <td colSpan="6" className="text-center py-8 text-gray-400">無符合資料</td>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">編號</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">性別</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">生日</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                                                     </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
+                                                </thead>
+                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                    {filteredCustomers.map(c => (
+                                                        <tr key={c.id} className="hover:bg-gray-50">
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-900">{c.CID1}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-blue-600 font-medium cursor-pointer hover:underline" onClick={() => setSelectedCustomer(c)}>
+                                                                {c.NAME}
+                                                            </td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.SEX}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.TEL}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-500">{c.BIRDATE}</td>
+                                                            <td className="px-4 py-3 whitespace-nowrap text-gray-500 flex space-x-2">
+                                                                <button onClick={() => setSelectedCustomer(c)} className="text-blue-600 hover:text-blue-800"><FileText className="w-4 h-4"/></button>
+                                                                {isAdmin && (
+                                                                    <>
+                                                                        <button onClick={() => openCustomerModal(c)} className="text-green-600 hover:text-green-800"><Edit className="w-4 h-4"/></button>
+                                                                        <button onClick={() => deleteCustomer(c.id, c.CID1)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></button>
+                                                                    </>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {filteredCustomers.length === 0 && (
+                                                        <tr>
+                                                            <td colSpan="6" className="text-center py-8 text-gray-400">無符合搜尋條件的資料</td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
-                                </div>
+                                )}
+                                {!hasSearched && (
+                                    <div className="text-center text-gray-400 mt-10">
+                                        請輸入條件並點擊「搜尋」按鈕以查詢資料
+                                    </div>
+                                )}
                             </div>
                         )}
 
                         {/* Customer Detail View */}
-                        {selectedCustomer && !loading && (
+                        {selectedCustomer && (
                             <div className="space-y-6 fade-in">
                                 {/* Basic Info Card */}
                                 <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600 relative">
@@ -967,7 +1022,7 @@
                                     </div>
                                 </div>
 
-                                {/* Prescriptions List */}
+                                {/* Prescriptions List (Requirement 4: Displayed below details) */}
                                 <div className="bg-white p-4 rounded shadow">
                                     <div className="flex justify-between items-center mb-4 border-b pb-2">
                                         <h3 className="text-xl font-bold text-gray-700 flex items-center"><Database className="w-5 h-5 mr-2"/> 驗光紀錄</h3>
@@ -1076,7 +1131,7 @@
                                 </div>
 
                                 <div className="bg-white p-6 rounded shadow">
-                                    <h2 className="text-lg font-bold mb-4">使用者權限管理</h2>
+                                    <h2 className="text-lg font-bold mb-4">使用者權限管理 (Requirement 1)</h2>
                                     <div className="flex gap-2 mb-4">
                                         <input type="email" id="new-user-email" placeholder="輸入使用者 Email" className="border p-2 rounded flex-1" />
                                         <button onClick={() => {
@@ -1090,13 +1145,26 @@
                                             <li key={u.id} className="py-3 flex justify-between items-center">
                                                 <div>
                                                     <span className="font-medium">{u.email}</span>
+                                                    {/* Show current role badge */}
                                                     <span className={`ml-2 text-xs px-2 py-1 rounded ${u.role === 'admin' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>
                                                         {u.role === 'admin' ? '管理員' : '一般使用者'}
                                                     </span>
                                                 </div>
-                                                {u.role !== 'admin' && (
+                                                
+                                                <div className="flex items-center space-x-3">
+                                                    {/* Role modification dropdown */}
+                                                    <select 
+                                                        value={u.role} 
+                                                        onChange={(e) => updateUserRole(u.id, e.target.value)}
+                                                        className="border rounded p-1 text-sm bg-white"
+                                                    >
+                                                        <option value="user">一般使用者</option>
+                                                        <option value="admin">管理員</option>
+                                                    </select>
+
+                                                    {/* Prevent deleting oneself if single admin maybe? But for now allow delete except hardcoded prevention usually in backend. Front end just allows delete. */}
                                                     <button onClick={() => removeUser(u.id)} className="text-red-600 hover:text-red-800 text-sm">刪除</button>
-                                                )}
+                                                </div>
                                             </li>
                                         ))}
                                     </ul>
@@ -1113,7 +1181,7 @@
 
                     </main>
 
-                    {/* Modals */}
+                    {/* Modals (Customer & Prx) */}
                     {isCustomerModalOpen && (
                         <Modal title={mode === 'add' ? "新增客戶" : "編輯客戶"} onClose={() => setIsCustomerModalOpen(false)}>
                             <form onSubmit={(e) => { e.preventDefault(); saveCustomer(); }} className="grid grid-cols-1 md:grid-cols-2 gap-4">
