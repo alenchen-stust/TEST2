@@ -15,6 +15,9 @@
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- PapaParse (CSV Parser) - 新增此行以支援大檔案串流解析 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -581,7 +584,11 @@
                     showMsg('刪除成功', 'success');
                 } catch(e) {
                     console.error(e);
-                    showMsg('刪除失敗', 'error');
+                    if (e.code === 'permission-denied') {
+                        alert('【權限不足】請檢查 Firebase 規則。');
+                    } else {
+                        showMsg('刪除失敗', 'error');
+                    }
                 }
             };
 
@@ -693,50 +700,73 @@
                 setLoading(true);
                 setImportProgress(0);
 
-                const reader = new FileReader();
-                reader.onload = async (evt) => {
-                    try {
-                        const text = evt.target.result;
-                        const rows = text.split(/\r\n|\n/).filter(r => r.trim());
-                        if (rows.length < 2) throw new Error("CSV 檔案內容為空或格式錯誤");
-
-                        const headers = rows[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
-                        const totalRows = rows.length - 1;
-                        let processedCount = 0;
-                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
+                // 使用 PapaParse 進行串流解析，避免大檔案造成記憶體溢出或瀏覽器卡死
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    chunkSize: 1024 * 1024 * 2, // 每次讀取 2MB
+                    chunk: async (results, parser) => {
+                        parser.pause(); // 暫停解析，先處理這批資料
                         
-                        const BATCH_SIZE = 500;
-                        for (let i = 1; i < rows.length; i += BATCH_SIZE) {
-                            const batch = writeBatch(db);
-                            const chunkEnd = Math.min(i + BATCH_SIZE, rows.length);
-                            
-                            for (let j = i; j < chunkEnd; j++) {
-                                const values = rows[j].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
-                                const obj = {};
-                                headers.forEach((h, idx) => {
-                                    if (values[idx] !== undefined) obj[h] = values[idx];
-                                });
-                                const newDocRef = doc(colRef);
-                                batch.set(newDocRef, obj);
-                            }
-                            
-                            await batch.commit();
-                            processedCount += (chunkEnd - i);
-                            setImportProgress(Math.round((processedCount / totalRows) * 100));
-                            await new Promise(resolve => setTimeout(resolve, 10));
+                        const rows = results.data;
+                        if (rows.length === 0) {
+                            parser.resume();
+                            return;
                         }
 
-                        showMsg(`成功匯入 ${processedCount} 筆資料`, 'success'); 
-                    } catch (err) {
-                        console.error(err);
-                        showMsg('匯入失敗: ' + err.message, 'error');
-                    } finally {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
+                        const BATCH_SIZE = 500;
+                        
+                        try {
+                            // 將這批資料分塊寫入 Firestore (因為 Firestore 批次限制 500 筆)
+                            for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+                                const batch = writeBatch(db);
+                                const chunk = rows.slice(i, i + BATCH_SIZE);
+                                
+                                chunk.forEach(row => {
+                                    // 清理 undefined 或空值的欄位，避免 Firestore 報錯
+                                    const cleanRow = {};
+                                    Object.keys(row).forEach(key => {
+                                        if (row[key] !== undefined && row[key] !== "") {
+                                            cleanRow[key] = row[key];
+                                        }
+                                    });
+                                    const newDocRef = doc(colRef);
+                                    batch.set(newDocRef, cleanRow);
+                                });
+
+                                await batch.commit();
+                            }
+
+                            // 更新進度 (概估)
+                            // PapaParse 不直接提供總進度百分比在 chunk 中，需要自己計算
+                            // 這裡使用 file.size 和 meta.cursor
+                            const percent = Math.round((results.meta.cursor / file.size) * 100);
+                            setImportProgress(percent);
+
+                            parser.resume(); // 繼續解析下一塊
+                        } catch (err) {
+                            console.error(err);
+                            showMsg('匯入部分失敗: ' + err.message, 'error');
+                            parser.abort();
+                            setLoading(false);
+                        }
+                    },
+                    complete: () => {
                         setLoading(false);
-                        setImportProgress(0);
-                        e.target.value = ''; 
+                        setImportProgress(100);
+                        showMsg('匯入完成！', 'success');
+                        e.target.value = '';
+                        
+                        // 如果是在客戶列表，重新整理
+                        if (type === 'CMF' && hasSearched) handleSearch();
+                    },
+                    error: (err) => {
+                        console.error(err);
+                        setLoading(false);
+                        showMsg('CSV 解析錯誤: ' + err.message, 'error');
                     }
-                };
-                reader.readAsText(file);
+                });
             };
 
             const showMsg = (text, type) => {
