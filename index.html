@@ -39,14 +39,15 @@
             getDoc,
             query, 
             where,
-            onSnapshot
+            onSnapshot,
+            writeBatch // Import writeBatch
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose to window for React component
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, 
             signInWithCustomToken, signInAnonymously,
-            getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot
+            getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot, writeBatch
         };
     </script>
 </head>
@@ -89,7 +90,7 @@
 
         // --- Initialize Firebase ---
         const { initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } = window.firebaseModules;
-        const { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot } = window.firebaseModules;
+        const { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot, writeBatch } = window.firebaseModules;
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -221,6 +222,7 @@
             const [isAdmin, setIsAdmin] = useState(false);
             const [userRole, setUserRole] = useState(null); // 'admin', 'user', 'pending'
             const [loading, setLoading] = useState(true);
+            const [importProgress, setImportProgress] = useState(0); // New progress state
             const [activeTab, setActiveTab] = useState('search');
             
             // Auth Error State
@@ -228,7 +230,7 @@
             
             // Data State
             const [customers, setCustomers] = useState([]);
-            const [allPrescriptions, setAllPrescriptions] = useState([]); // 2. 儲存所有驗光資料
+            const [allPrescriptions, setAllPrescriptions] = useState([]); 
             const [filteredCustomers, setFilteredCustomers] = useState([]);
             const [selectedCustomer, setSelectedCustomer] = useState(null);
             
@@ -265,23 +267,19 @@
                         // Hardcoded Predefined Admins
                         const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
 
-                        // 1. Auto-register user if not exists (Fix for missing users in list)
                         try {
                             const snapshot = await getDocs(adminRef);
                             const allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                             const myUser = allUsers.find(u => u.email === currentUser.email);
                             
-                            let currentRole = 'pending'; // Default role for new users
+                            let currentRole = 'pending'; 
 
-                            // If predefined admin, force admin role
                             if (PREDEFINED_ADMINS.includes(currentUser.email)) {
                                 currentRole = 'admin';
                             } else if (myUser) {
-                                // If user exists, use their role
-                                currentRole = myUser.role || 'pending'; // fallback to pending if role missing
+                                currentRole = myUser.role || 'pending'; 
                             }
 
-                            // Register or Update
                             if (!myUser) {
                                 await addDoc(adminRef, {
                                     email: currentUser.email,
@@ -290,11 +288,9 @@
                                 });
                                 console.log(`Auto-registered new user as ${currentRole}:`, currentUser.email);
                             } else if (PREDEFINED_ADMINS.includes(currentUser.email) && myUser.role !== 'admin') {
-                                // Force update predefined admin
                                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' });
                             }
 
-                            // Set App State
                             setUserRole(currentRole);
                             setIsAdmin(currentRole === 'admin');
 
@@ -318,7 +314,7 @@
 
             // --- Data Listeners (CMF) ---
             useEffect(() => {
-                if (!user || userRole === 'pending') return; // Block data access if pending
+                if (!user || userRole === 'pending') return;
                 
                 setLoading(true);
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'CMF');
@@ -333,11 +329,10 @@
                 return () => unsubscribe();
             }, [user, userRole]);
 
-            // --- Data Listeners (PRXMF - Fetch All for Counts & Robust Mapping) ---
+            // --- Data Listeners (PRXMF) ---
             useEffect(() => {
-                if (!user || userRole === 'pending') return; // Block data access if pending
+                if (!user || userRole === 'pending') return; 
 
-                // 2. Fetch ALL prescriptions to allow counting and robust linking
                 const q = collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF');
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -350,7 +345,6 @@
             // --- Update Customer Prescriptions when selected ---
             useEffect(() => {
                 if (selectedCustomer && allPrescriptions.length > 0) {
-                    // 3. Robust Linking: Compare as strings and trim whitespace
                     const matches = allPrescriptions.filter(p => 
                         String(p.CID1).trim() === String(selectedCustomer.CID1).trim()
                     );
@@ -515,7 +509,6 @@
                 if (!isAdmin || !confirm('確定要刪除此客戶及其所有驗光資料嗎？')) return;
                 try {
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'CMF', id));
-                    // 刪除關聯的 PRXMF
                     const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'PRXMF'), where('CID1', '==', cid1));
                     const snapshot = await getDocs(q);
                     const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
@@ -534,11 +527,9 @@
             const openPrxModal = (prx = null) => {
                 if (!selectedCustomer) return;
                 if (prx) {
-                    // 編輯模式：載入點選的驗光資料
                     setMode('edit');
                     setEditingData({ ...prx });
                 } else {
-                    // 新增模式：預設帶入客戶基本資料
                     setMode('add');
                     setEditingData({ 
                         CID1: selectedCustomer.CID1,
@@ -559,16 +550,14 @@
                         await addDoc(colRef, editingData);
                         showMsg('新增驗光資料成功', 'success');
                     } else {
-                        // 編輯模式：更新現有文件 (需確保有 ID)
                         if (!editingData.id) throw new Error("資料 ID 遺失");
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', editingData.id);
-                        const { id, ...updateData } = editingData; // 排除 ID 欄位避免重複寫入
+                        const { id, ...updateData } = editingData;
                         await updateDoc(docRef, updateData);
                         showMsg('修改驗光資料成功', 'success');
                     }
                     setIsPrxModalOpen(false);
                     
-                    // 同步更新客戶資料表的「最後光臨日期」
                     if (selectedCustomer && editingData.DATE) {
                          const customerRef = doc(db, 'artifacts', appId, 'public', 'data', 'CMF', selectedCustomer.id);
                          await updateDoc(customerRef, { LASTD: editingData.DATE });
@@ -587,17 +576,12 @@
             const deletePrx = async (id) => {
                 if (!isAdmin) return;
                 if (!confirm('確定要永久刪除此筆驗光紀錄嗎？\n此動作無法復原。')) return;
-                
                 try {
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'PRXMF', id));
                     showMsg('刪除成功', 'success');
                 } catch(e) {
                     console.error(e);
-                    if (e.code === 'permission-denied') {
-                        alert('【權限不足】請檢查 Firebase 規則。');
-                    } else {
-                        showMsg('刪除失敗', 'error');
-                    }
+                    showMsg('刪除失敗', 'error');
                 }
             };
 
@@ -707,34 +691,49 @@
                 if (!file) return;
                 
                 setLoading(true);
+                setImportProgress(0);
+
                 const reader = new FileReader();
                 reader.onload = async (evt) => {
                     try {
                         const text = evt.target.result;
-                        const rows = text.split('\n').map(r => r.trim()).filter(r => r);
-                        const headers = rows[0].split(',').map(h => h.replace(/"/g, '').trim());
+                        const rows = text.split(/\r\n|\n/).filter(r => r.trim());
+                        if (rows.length < 2) throw new Error("CSV 檔案內容為空或格式錯誤");
+
+                        const headers = rows[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+                        const totalRows = rows.length - 1;
+                        let processedCount = 0;
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
                         
-                        const batchData = [];
-                        for (let i = 1; i < rows.length; i++) {
-                            const values = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
-                            const obj = {};
-                            headers.forEach((h, idx) => obj[h] = values[idx]);
-                            batchData.push(obj);
+                        const BATCH_SIZE = 500;
+                        for (let i = 1; i < rows.length; i += BATCH_SIZE) {
+                            const batch = writeBatch(db);
+                            const chunkEnd = Math.min(i + BATCH_SIZE, rows.length);
+                            
+                            for (let j = i; j < chunkEnd; j++) {
+                                const values = rows[j].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val.replace(/^"|"$/g, '').replace(/""/g, '"'));
+                                const obj = {};
+                                headers.forEach((h, idx) => {
+                                    if (values[idx] !== undefined) obj[h] = values[idx];
+                                });
+                                const newDocRef = doc(colRef);
+                                batch.set(newDocRef, obj);
+                            }
+                            
+                            await batch.commit();
+                            processedCount += (chunkEnd - i);
+                            setImportProgress(Math.round((processedCount / totalRows) * 100));
+                            await new Promise(resolve => setTimeout(resolve, 10));
                         }
 
-                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
-                        let count = 0;
-                        for (const d of batchData) {
-                            await addDoc(colRef, d);
-                            count++;
-                        }
-                        showMsg(`成功匯入 ${count} 筆資料`, 'success'); 
-                        e.target.value = ''; 
+                        showMsg(`成功匯入 ${processedCount} 筆資料`, 'success'); 
                     } catch (err) {
                         console.error(err);
-                        showMsg('匯入過程發生錯誤', 'error');
+                        showMsg('匯入失敗: ' + err.message, 'error');
                     } finally {
                         setLoading(false);
+                        setImportProgress(0);
+                        e.target.value = ''; 
                     }
                 };
                 reader.readAsText(file);
@@ -790,7 +789,9 @@
                     {(isAiLoading || loading) && (
                         <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
                              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
-                             <p className="text-lg font-semibold animate-pulse">{isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}</p>
+                             <p className="text-lg font-semibold animate-pulse">
+                                {importProgress > 0 ? `正在匯入... ${importProgress}%` : isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}
+                             </p>
                         </div>
                     )}
 
