@@ -224,6 +224,7 @@
             const [isAdmin, setIsAdmin] = useState(false);
             const [userRole, setUserRole] = useState(null); // 'admin', 'user', 'pending'
             const [loading, setLoading] = useState(true);
+            const [importStatus, setImportStatus] = useState(''); // Detailed status
             const [importProgress, setImportProgress] = useState(0); // New progress state
             const [activeTab, setActiveTab] = useState('search');
             
@@ -697,11 +698,12 @@
                 if (!file) return;
                 
                 setLoading(true);
+                setImportStatus('正在解析 CSV...');
                 setImportProgress(0);
 
                 Papa.parse(file, {
                     header: true,
-                    skipEmptyLines: 'greedy',
+                    skipEmptyLines: 'greedy', // Use greedy to skip whitespace lines
                     complete: async (results) => {
                         const rows = results.data;
                         if (!rows || rows.length === 0) {
@@ -710,55 +712,81 @@
                             return;
                         }
 
+                        // Pre-check headers
+                        const fileHeaders = results.meta.fields || [];
+                        const requiredKey = type === 'CMF' ? 'CID1' : 'CID1'; // Basic check
+                        if (!fileHeaders.includes(requiredKey)) {
+                            if (!confirm(`警告：CSV 欄位似乎不符合格式 (未找到 ${requiredKey})。\n\n偵測到的欄位：${fileHeaders.slice(0, 5).join(', ')}...\n\n是否仍要繼續？`)) {
+                                setLoading(false);
+                                return;
+                            }
+                        }
+
                         const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
-                        const BATCH_SIZE = 400;
+                        const BATCH_SIZE = 400; // Conservative batch size
                         const totalRows = rows.length;
                         let processedCount = 0;
+
+                        setImportStatus(`準備匯入 ${totalRows} 筆資料...`);
 
                         try {
                             // Process in chunks sequentially
                             for (let i = 0; i < totalRows; i += BATCH_SIZE) {
                                 const batch = writeBatch(db);
                                 const chunk = rows.slice(i, i + BATCH_SIZE);
+                                let opsInBatch = 0;
                                 
                                 chunk.forEach(row => {
-                                    // Basic cleanup
+                                    // Basic cleanup: remove keys with empty strings or undefined
                                     const cleanRow = {};
                                     Object.keys(row).forEach(key => {
-                                        if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
-                                            cleanRow[key] = row[key];
+                                        let val = row[key];
+                                        if (val !== undefined && val !== null && String(val).trim() !== "") {
+                                            cleanRow[key] = val;
                                         }
                                     });
+                                    
+                                    // Only add if row has data
                                     if (Object.keys(cleanRow).length > 0) {
                                         const newDocRef = doc(colRef);
                                         batch.set(newDocRef, cleanRow);
+                                        opsInBatch++;
                                     }
                                 });
 
-                                await batch.commit();
-                                processedCount += chunk.length;
+                                if (opsInBatch > 0) {
+                                    await batch.commit();
+                                    processedCount += opsInBatch; // Count actual writes
+                                }
                                 
                                 // Update progress
-                                setImportProgress(Math.min(Math.round((processedCount / totalRows) * 100), 100));
+                                setImportProgress(Math.min(Math.round(((i + chunk.length) / totalRows) * 100), 100));
+                                setImportStatus(`正在寫入資料庫... (${processedCount} / ${totalRows})`);
                                 
-                                // Small delay to allow UI update and prevent browser freeze
-                                await new Promise(resolve => setTimeout(resolve, 20));
+                                // Delay to allow UI paint
+                                await new Promise(resolve => setTimeout(resolve, 100));
                             }
-                            showMsg(`成功匯入 ${processedCount} 筆資料`, 'success');
-                            if (type === 'CMF' && hasSearched) handleSearch();
+                            
+                            setLoading(false); // Close overlay first
+                            // Then show success (small delay to ensure overlay is gone)
+                            setTimeout(() => {
+                                alert(`匯入完成！\n成功匯入 ${processedCount} 筆資料。`);
+                                if (type === 'CMF' && hasSearched) handleSearch();
+                            }, 100);
+
                         } catch (err) {
                             console.error(err);
-                            showMsg('匯入過程發生錯誤: ' + err.message, 'error');
-                        } finally {
                             setLoading(false);
+                            alert('匯入過程發生錯誤: ' + err.message);
+                        } finally {
                             setImportProgress(0);
-                            e.target.value = '';
+                            e.target.value = ''; // Reset input
                         }
                     },
                     error: (err) => {
                         console.error(err);
                         setLoading(false);
-                        showMsg('CSV 解析失敗: ' + err.message, 'error');
+                        alert('CSV 解析失敗: ' + err.message);
                     }
                 });
             };
@@ -813,9 +841,14 @@
                     {(isAiLoading || loading) && (
                         <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
                              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
-                             <p className="text-lg font-semibold animate-pulse">
-                                {importProgress > 0 ? `正在匯入... ${importProgress}%` : isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}
+                             <p className="text-lg font-semibold animate-pulse mb-2">
+                                {importProgress > 0 ? importStatus : isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}
                              </p>
+                             {importProgress > 0 && (
+                                 <div className="w-64 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                                    <div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${importProgress}%`}}></div>
+                                 </div>
+                             )}
                         </div>
                     )}
 
