@@ -15,9 +15,6 @@
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- PapaParse (CSV Parser) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -82,7 +79,7 @@
             read: async (sheet) => {
                 const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
                 const json = await res.json();
-                return json.status === 'success' ? json.data : [];
+                return json.status === 'success' && Array.isArray(json.data) ? json.data : [];
             },
             create: async (sheet, data) => {
                 const res = await fetch(GAS_API_URL, {
@@ -149,7 +146,6 @@
             "連江縣": ["南竿鄉", "北竿鄉", "莒光鄉", "東引鄉"]
         };
 
-        // Common Roads for Tainan (DataList Options)
         const COMMON_ROADS = [
             "中正路", "中山路", "中華路", "中華東路", "中華西路", "中華北路", "中華南路",
             "民族路", "民權路", "民生路", "成功路", "西門路", "北門路", "東門路", "南門路",
@@ -171,6 +167,8 @@
             { key: 'CLASS1', label: '備考1', type: 'text' },
             { key: 'SUM', label: '總計', type: 'number' },
         ];
+
+        const PRXMF_FIELDS_KEYS = ['DATE', 'RSPH', 'RCYL', 'RAXIS', 'RADD', 'RBCV', 'RBCH', 'LSPH', 'LCYL', 'LAXIS', 'LADD', 'LBCV', 'LBCH', 'PD', 'ITEM', 'RITEM', 'LITEM', 'RBRVISE1', 'LBRVISE1', 'RBRVISE2', 'LBRVISE2', 'REMARK', 'REMARK2', 'REMARK3', 'AGE', 'NUM'];
 
         // --- Utility Components ---
         const LoadingSpinner = () => (
@@ -213,10 +211,9 @@
             const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
             const [editingData, setEditingData] = useState({});
             const [mode, setMode] = useState('add');
-            const [isViewOnly, setIsViewOnly] = useState(false); // Check if opening in view-only mode
+            const [isViewOnly, setIsViewOnly] = useState(false); 
 
-            // Address State
-            const [addrCity, setAddrCity] = useState('臺南市'); // Default Tainan
+            const [addrCity, setAddrCity] = useState('臺南市'); 
             const [addrDist, setAddrDist] = useState('');
             const [addrRoad, setAddrRoad] = useState('');
             const [addrDetail, setAddrDetail] = useState('');
@@ -224,6 +221,17 @@
             const [systemUsers, setSystemUsers] = useState([]);
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
+
+            // *** Optimization: Memoize Prescription Counts ***
+            // This prevents the blank screen/freeze issue by pre-calculating counts
+            const prxCounts = useMemo(() => {
+                const counts = {};
+                allPrescriptions.forEach(p => {
+                    const id = String(p.CID1 || '').trim();
+                    if(id) counts[id] = (counts[id] || 0) + 1;
+                });
+                return counts;
+            }, [allPrescriptions]);
 
             // --- Auth ---
             useEffect(() => {
@@ -260,8 +268,9 @@
                 setLoading(true);
                 try {
                     const [cData, pData] = await Promise.all([apiService.read('CMF'), apiService.read('PRXMF')]);
-                    setCustomers(cData || []);
-                    setAllPrescriptions(pData || []);
+                    // Ensure arrays are valid before setting state
+                    setCustomers(Array.isArray(cData) ? cData : []);
+                    setAllPrescriptions(Array.isArray(pData) ? pData : []);
                 } catch (e) { showMsg("資料讀取失敗", "error"); } finally { setLoading(false); }
             };
 
@@ -293,7 +302,8 @@
             const handleSearch = () => {
                 const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
                 const filtered = customers.filter(c => {
-                    const matchCID = CID1 ? String(c.CID1).includes(CID1) : true;
+                    if (!c) return false;
+                    const matchCID = CID1 ? String(c.CID1 || '').includes(CID1) : true;
                     const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(NAME.toLowerCase()) : true;
                     const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
                     const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(ADDRESS.toLowerCase()) : true;
@@ -304,13 +314,10 @@
                 setHasSearched(true);
             };
 
-            const getPrxCount = (cid1) => allPrescriptions.filter(p => String(p.CID1).trim() === String(cid1).trim()).length;
-
             // CRUD
             const openCustomerModal = (c) => { 
                 setMode(c ? 'edit' : 'add'); 
                 setEditingData(c ? {...c} : {CID1:'', NAME:'', SEX:'男', INDATE: new Date().toISOString().split('T')[0], ADDRESS: ''}); 
-                // Reset address parts
                 setAddrCity('臺南市'); setAddrDist(''); setAddrRoad(''); setAddrDetail(c ? (c.ADDRESS || '') : '');
                 setIsCustomerModalOpen(true); 
             };
@@ -333,7 +340,6 @@
                     showMsg('儲存成功', 'success'); 
                     await fetchData(); 
 
-                    // Auto open Prx modal if new customer
                     if(mode === 'add' && newCustomer) {
                         setSelectedCustomer(newCustomer);
                         setTimeout(() => openPrxModal(null, newCustomer), 500); 
@@ -352,7 +358,6 @@
                 const targetCustomer = customerOverride || selectedCustomer;
                 if (!targetCustomer) return;
                 
-                // Allow non-admins to open if p exists (View Mode)
                 const isView = !isAdmin && p !== null;
                 setIsViewOnly(isView);
 
@@ -367,7 +372,7 @@
             };
 
             const savePrx = async () => {
-                if(!isAdmin) return; // Guard
+                if(!isAdmin) return;
                 setLoading(true);
                 try {
                     if (mode === 'add') await apiService.create('PRXMF', editingData);
@@ -402,7 +407,7 @@
                 const sorted = [...data].sort((a, b) => String(a.CID1||'').localeCompare(String(b.CID1||''), undefined, {numeric: true}));
                 const today = new Date().toISOString().split('T')[0];
                 const filename = `${type}_${today}.csv`;
-                let exportHeaders = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : ['CID1', 'NAME', ...PRXMF_FIELDS.map(f => f.key)];
+                let exportHeaders = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : ['CID1', 'NAME', ...PRXMF_FIELDS_KEYS];
                 const content = [exportHeaders.join(','), ...sorted.map(row => exportHeaders.map(f => `"${String(row[f]||'').replace(/"/g,'""')}"`).join(','))].join('\n');
                 const url = URL.createObjectURL(new Blob(["\uFEFF"+content], {type:'text/csv;charset=utf-8'}));
                 const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
@@ -475,7 +480,7 @@
                                                         <td className="p-2">{c.CID1}</td>
                                                         <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{c.NAME}</td>
                                                         <td className="p-2 text-center">{c.SEX}</td><td className="p-2">{c.TEL}</td><td className="p-2">{c.BIRDATE}</td>
-                                                        <td className="p-2 text-center font-bold">{getPrxCount(c.CID1)}</td>
+                                                        <td className="p-2 text-center font-bold">{prxCounts[String(c.CID1||'').trim()] || 0}</td>
                                                         <td className="p-2 flex gap-2">
                                                             <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
                                                             {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
@@ -489,7 +494,6 @@
                             </div>
                         ) : selectedCustomer ? (
                             <div className="space-y-6 fade-in">
-                                {/* Info Card */}
                                 <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600 relative">
                                     <div className="flex justify-between items-start mb-4">
                                         <h2 className="text-2xl font-bold text-gray-800">{selectedCustomer.NAME} <span className="text-lg text-gray-500 font-normal">({selectedCustomer.CID1})</span></h2>
@@ -502,7 +506,6 @@
                                         <div className="col-span-3 bg-gray-50 p-2">備考: {selectedCustomer.CLASS} {selectedCustomer.CLASS1}</div>
                                     </div>
                                 </div>
-                                {/* Prx List */}
                                 <div className="bg-white p-4 rounded shadow">
                                     <div className="flex justify-between mb-4 border-b pb-2"><h3 className="font-bold flex items-center"><Database className="mr-2"/> 驗光紀錄</h3>{isAdmin && <button onClick={()=>openPrxModal()} className="bg-green-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增驗光</button>}</div>
                                     <div className="space-y-4">
@@ -610,7 +613,6 @@
                         <Modal title={isViewOnly ? "驗光資料 (唯讀)" : (mode === 'add' ? "新增驗光資料" : "編輯驗光資料")} onClose={() => setIsPrxModalOpen(false)} size="large">
                             <form onSubmit={(e) => { e.preventDefault(); if(!isViewOnly) savePrx(); }} className="space-y-4">
                                 <fieldset disabled={isViewOnly} className="space-y-4">
-                                {/* Common Info */}
                                 <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 rounded">
                                     <div><label className="text-xs font-bold text-gray-500">日期</label><input type="date" className="border w-full rounded p-1" value={editingData.DATE||''} onChange={e=>setEditingData({...editingData, DATE:e.target.value})} /></div>
                                     <div><label className="text-xs font-bold text-gray-500">編號</label><input className="border w-full rounded p-1 bg-gray-100" value={editingData.CID1||''} readOnly /></div>
@@ -618,7 +620,6 @@
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {/* Right Eye Input */}
                                     <div className="border border-red-200 rounded p-3 bg-red-50">
                                         <div className="font-bold text-red-800 mb-2 border-b border-red-200 text-lg">右眼 (R)</div>
                                         <div className="grid grid-cols-3 gap-2">
@@ -633,7 +634,6 @@
                                             <div className="col-span-3"><label className="text-xs">隱形眼鏡 (R-ITEM)</label><input className="border w-full rounded p-1" value={editingData.RITEM||''} onChange={e=>setEditingData({...editingData, RITEM:e.target.value})} /></div>
                                         </div>
                                     </div>
-                                    {/* Left Eye Input */}
                                     <div className="border border-blue-200 rounded p-3 bg-blue-50">
                                         <div className="font-bold text-blue-800 mb-2 border-b border-blue-200 text-lg">左眼 (L)</div>
                                         <div className="grid grid-cols-3 gap-2">
@@ -650,7 +650,6 @@
                                     </div>
                                 </div>
 
-                                {/* Other Details */}
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 border-t pt-4">
                                     <div><label className="text-xs font-bold text-gray-500">瞳距 (PD)</label><input className="border w-full rounded p-1" value={editingData.PD||''} onChange={e=>setEditingData({...editingData, PD:e.target.value})} /></div>
                                     <div><label className="text-xs font-bold text-gray-500">年齡 (AGE)</label><input type="number" className="border w-full rounded p-1" value={editingData.AGE||''} onChange={e=>setEditingData({...editingData, AGE:e.target.value})} /></div>
