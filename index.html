@@ -83,32 +83,16 @@
                 super(props);
                 this.state = { hasError: false, error: null, errorInfo: null };
             }
-
-            static getDerivedStateFromError(error) {
-                return { hasError: true, error };
-            }
-
-            componentDidCatch(error, errorInfo) {
-                console.error("System Error:", error, errorInfo);
-                this.setState({ errorInfo });
-            }
-
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, errorInfo) { console.error("System Error:", error, errorInfo); this.setState({ errorInfo }); }
             render() {
                 if (this.state.hasError) {
                     return (
                         <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
                             <div className="bg-white p-8 rounded-lg shadow-xl max-w-2xl w-full border border-red-200">
-                                <h2 className="text-2xl font-bold text-red-600 mb-4 flex items-center">
-                                    <svg className="w-8 h-8 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                    系統發生錯誤
-                                </h2>
-                                <p className="mb-4 text-gray-700">很抱歉，程式執行時遇到了未預期的問題。</p>
-                                <div className="bg-gray-100 p-4 rounded text-left overflow-auto max-h-64 text-xs font-mono text-gray-600 mb-6">
-                                    <strong>Error:</strong> {this.state.error && this.state.error.toString()}
-                                </div>
-                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">
-                                    重新整理頁面
-                                </button>
+                                <h2 className="text-2xl font-bold text-red-600 mb-4">系統發生錯誤</h2>
+                                <p className="mb-4 text-gray-700">可能是資料量過大或格式錯誤。</p>
+                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">重新整理頁面</button>
                             </div>
                         </div>
                     );
@@ -124,7 +108,7 @@
                     const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
                     const json = await res.json();
                     if (json.status === 'success' && Array.isArray(json.data)) {
-                        // Robust sanitization: Convert everything to string to prevent React render errors
+                        // 記憶體優化：只保留需要的欄位值，並轉為字串
                         return json.data.map(item => {
                             const cleanItem = {};
                             for (const key in item) {
@@ -177,7 +161,7 @@
             { key: 'SEX', label: '性別', type: 'select', options: ['男', '女', '其他'] },
             { key: 'TEL', label: '電話', type: 'tel' },
             { key: 'BIRDATE', label: '生日', type: 'date' },
-            { key: 'ADDRESS', label: '地址', type: 'text', className: 'col-span-2' }, // Reverted to text
+            { key: 'ADDRESS', label: '地址', type: 'text', className: 'col-span-2' },
             { key: 'INDATE', label: '初訪日期', type: 'date' },
             { key: 'LASTD', label: '最後日期', type: 'date' },
             { key: 'CLASS', label: '備考', type: 'text' },
@@ -223,7 +207,6 @@
             const [customerPrescriptions, setCustomerPrescriptions] = useState([]);
             
             const [searchCriteria, setSearchCriteria] = useState({ CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: '' });
-            const [hasSearched, setHasSearched] = useState(false);
 
             const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
             const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
@@ -235,7 +218,7 @@
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
 
-            // Memoize Prescription Counts
+            // Optimization: Memoize Prescription Counts
             const prxCounts = useMemo(() => {
                 const counts = {};
                 if(Array.isArray(allPrescriptions)) {
@@ -288,8 +271,13 @@
                 setLoading(true);
                 try {
                     const [cData, pData] = await Promise.all([apiService.read('CMF'), apiService.read('PRXMF')]);
-                    setCustomers(Array.isArray(cData) ? cData : []);
+                    const safeCData = Array.isArray(cData) ? cData : [];
+                    setCustomers(safeCData);
                     setAllPrescriptions(Array.isArray(pData) ? pData : []);
+                    
+                    // Default View: Show first 20 customers to verify data load
+                    setFilteredCustomers(safeCData.slice(0, 20));
+                    
                 } catch (e) { showMsg("資料讀取失敗", "error"); } finally { setLoading(false); }
             };
 
@@ -324,6 +312,7 @@
                 const lowerName = (NAME || '').toLowerCase();
                 const lowerAddr = (ADDRESS || '').toLowerCase();
 
+                // Filter
                 const filtered = customers.filter(c => {
                     if (!c) return false;
                     const matchCID = CID1 ? String(c.CID1 || '').includes(CID1) : true;
@@ -334,14 +323,18 @@
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
                 
-                // Safety limit
-                if (filtered.length > 100) {
-                    showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 100 筆。`, 'error');
-                    setFilteredCustomers(filtered.slice(0, 100));
+                // ** CRITICAL FIX: Limit Render Count to Prevent White Screen **
+                const LIMIT = 50;
+                if (filtered.length > LIMIT) {
+                    setFilteredCustomers(filtered.slice(0, LIMIT));
+                    // Only show alert if actually filtering (not default view)
+                    if (CID1 || NAME || TEL || ADDRESS || BIRDATE) {
+                        showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 ${LIMIT} 筆，請增加條件。`, 'error');
+                    }
                 } else {
                     setFilteredCustomers(filtered);
+                    if (filtered.length === 0) showMsg('無符合資料', 'error');
                 }
-                setHasSearched(true);
             };
 
             // CRUD
@@ -354,7 +347,7 @@
             const saveCustomer = async () => {
                 if(!isAdmin) return;
                 setLoading(true);
-                const dataToSave = { ...editingData }; // Simple save
+                const dataToSave = { ...editingData };
 
                 try {
                     let newCustomer = null;
@@ -371,7 +364,7 @@
                     if(mode === 'add' && newCustomer) {
                         setSelectedCustomer(newCustomer);
                         setTimeout(() => openPrxModal(null, newCustomer), 500); 
-                    } else if (hasSearched) handleSearch();
+                    } else handleSearch(); // Refresh list
 
                 } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
             };
@@ -385,10 +378,8 @@
             const openPrxModal = (p = null, customerOverride = null) => {
                 const targetCustomer = customerOverride || selectedCustomer;
                 if (!targetCustomer) return;
-                
                 const isView = !isAdmin && p !== null;
                 setIsViewOnly(isView);
-
                 setMode(p ? 'edit' : 'add');
                 setEditingData(p ? {...p} : {
                     CID1: targetCustomer.CID1, 
@@ -498,32 +489,34 @@
                                     <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e=>setSearchCriteria({...searchCriteria, BIRDATE:e.target.value})} />
                                     <button onClick={handleSearch} className="bg-blue-600 text-white p-2 rounded flex justify-center items-center"><Search className="mr-1"/> 搜尋</button>
                                 </div>
-                                {hasSearched && (
-                                    <div className="bg-white p-4 rounded shadow fade-in">
-                                        <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length})</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
-                                        <div className="overflow-x-auto">
-                                        <table className="w-full">
-                                            <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
-                                            <tbody>
-                                                {filteredCustomers.map((c, idx) => (
-                                                    <tr key={c.id || idx} className="border-t hover:bg-gray-50">
-                                                        <td className="p-2">{String(c.CID1 || '')}</td>
-                                                        <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{String(c.NAME || '')}</td>
-                                                        <td className="p-2 text-center">{String(c.SEX || '')}</td>
-                                                        <td className="p-2">{String(c.TEL || '')}</td>
-                                                        <td className="p-2">{String(c.BIRDATE || '')}</td>
-                                                        <td className="p-2 text-center font-bold">{prxCounts[String(c.CID1||'').trim()] || 0}</td>
-                                                        <td className="p-2 flex gap-2">
-                                                            <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
-                                                            {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                        </div>
+                                {/* List always renders something if filteredCustomers has items (initially 20, filtered max 50) */}
+                                <div className="bg-white p-4 rounded shadow fade-in">
+                                    <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length} 筆)</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                    <div className="overflow-x-auto">
+                                    <table className="w-full">
+                                        <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
+                                        <tbody>
+                                            {filteredCustomers.map((c, idx) => (
+                                                <tr key={c.id || idx} className="border-t hover:bg-gray-50">
+                                                    <td className="p-2">{String(c.CID1 || '')}</td>
+                                                    <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{String(c.NAME || '')}</td>
+                                                    <td className="p-2 text-center">{String(c.SEX || '')}</td>
+                                                    <td className="p-2">{String(c.TEL || '')}</td>
+                                                    <td className="p-2">{String(c.BIRDATE || '')}</td>
+                                                    <td className="p-2 text-center font-bold">{prxCounts[String(c.CID1||'').trim()] || 0}</td>
+                                                    <td className="p-2 flex gap-2">
+                                                        <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
+                                                        {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {filteredCustomers.length === 0 && (
+                                                <tr><td colSpan="7" className="text-center py-8 text-gray-400">尚無資料或無符合條件</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
                                     </div>
-                                )}
+                                </div>
                             </div>
                         ) : selectedCustomer ? (
                             <div className="space-y-6 fade-in">
