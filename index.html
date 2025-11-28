@@ -77,7 +77,7 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-        // --- Error Boundary Component (Moved Outside App) ---
+        // --- Error Boundary Component (防崩潰機制) ---
         class ErrorBoundary extends Component {
             constructor(props) {
                 super(props);
@@ -102,11 +102,9 @@
                                     <svg className="w-8 h-8 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                                     系統發生錯誤
                                 </h2>
-                                <p className="mb-4 text-gray-700">很抱歉，程式執行時遇到了未預期的問題。請嘗試重新整理頁面。</p>
+                                <p className="mb-4 text-gray-700">很抱歉，程式執行時遇到了未預期的問題。</p>
                                 <div className="bg-gray-100 p-4 rounded text-left overflow-auto max-h-64 text-xs font-mono text-gray-600 mb-6">
                                     <strong>Error:</strong> {this.state.error && this.state.error.toString()}
-                                    <br/><br/>
-                                    <strong>Stack:</strong> {this.state.errorInfo && this.state.errorInfo.componentStack}
                                 </div>
                                 <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">
                                     重新整理頁面
@@ -119,14 +117,14 @@
             }
         }
 
-        // --- API Services ---
+        // --- API Services (Google Sheets) ---
         const apiService = {
             read: async (sheet) => {
                 try {
                     const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
                     const json = await res.json();
                     if (json.status === 'success' && Array.isArray(json.data)) {
-                        // Robust sanitization
+                        // Robust sanitization: Convert everything to string to prevent React render errors
                         return json.data.map(item => {
                             const cleanItem = {};
                             for (const key in item) {
@@ -172,46 +170,14 @@
         const Eye = (props) => <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></Icon>;
         const Lock = (props) => <Icon {...props}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></Icon>;
 
-        // --- Constants & Data ---
-        const TAIWAN_CITIES = {
-            "臺北市": ["中正區", "大同區", "中山區", "松山區", "大安區", "萬華區", "信義區", "士林區", "北投區", "內湖區", "南港區", "文山區"],
-            "新北市": ["板橋區", "新莊區", "中和區", "永和區", "土城區", "樹林區", "三峽區", "鶯歌區", "三重區", "蘆洲區", "五股區", "泰山區", "林口區", "淡水區", "八里區", "三芝區", "石門區", "汐止區", "金山區", "萬里區", "瑞芳區", "平溪區", "雙溪區", "貢寮區", "新店區", "坪林區", "烏來區", "深坑區", "石碇區"],
-            "基隆市": ["仁愛區", "信義區", "中正區", "中山區", "安樂區", "暖暖區", "七堵區"],
-            "桃園市": ["桃園區", "中壢區", "大溪區", "楊梅區", "蘆竹區", "大園區", "龜山區", "八德區", "龍潭區", "平鎮區", "新屋區", "觀音區", "復興區"],
-            "新竹市": ["東區", "北區", "香山區"],
-            "新竹縣": ["竹北市", "竹東鎮", "新埔鎮", "關西鎮", "湖口鄉", "新豐鄉", "芎林鄉", "橫山鄉", "北埔鄉", "寶山鄉", "峨眉鄉", "尖石鄉", "五峰鄉"],
-            "苗栗縣": ["苗栗市", "頭份市", "竹南鎮", "後龍鎮", "通霄鎮", "苑裡鎮", "卓蘭鎮", "造橋鄉", "西湖鄉", "頭屋鄉", "公館鄉", "銅鑼鄉", "三義鄉", "大湖鄉", "獅潭鄉", "泰安鄉", "南庄鄉"],
-            "臺中市": ["中區", "東區", "南區", "西區", "北區", "北屯區", "西屯區", "南屯區", "太平區", "大里區", "霧峰區", "烏日區", "豐原區", "后里區", "石岡區", "東勢區", "和平區", "新社區", "潭子區", "大雅區", "神岡區", "大肚區", "沙鹿區", "龍井區", "梧棲區", "清水區", "大甲區", "外埔區", "大安區"],
-            "彰化縣": ["彰化市", "員林市", "和美鎮", "鹿港鎮", "溪湖鎮", "二林鎮", "田中鎮", "北斗鎮", "花壇鄉", "芬園鄉", "大村鄉", "埔心鄉", "永靖鄉", "社頭鄉", "二水鄉", "田尾鄉", "埤頭鄉", "芳苑鄉", "大城鄉", "竹塘鄉", "溪州鄉", "秀水鄉", "福興鄉", "線西鄉", "伸港鄉", "埔鹽鄉"],
-            "南投縣": ["南投市", "埔里鎮", "草屯鎮", "竹山鎮", "集集鎮", "名間鄉", "鹿谷鄉", "中寮鄉", "魚池鄉", "國姓鄉", "水里鄉", "信義鄉", "仁愛鄉"],
-            "雲林縣": ["斗六市", "斗南鎮", "虎尾鎮", "西螺鎮", "土庫鎮", "北港鎮", "古坑鄉", "大埤鄉", "莿桐鄉", "林內鄉", "二崙鄉", "崙背鄉", "麥寮鄉", "東勢鄉", "褒忠鄉", "臺西鄉", "元長鄉", "四湖鄉", "口湖鄉", "水林鄉"],
-            "嘉義市": ["東區", "西區"],
-            "嘉義縣": ["太保市", "朴子市", "布袋鎮", "大林鎮", "民雄鄉", "溪口鄉", "新港鄉", "六腳鄉", "東石鄉", "義竹鄉", "鹿草鄉", "水上鄉", "中埔鄉", "竹崎鄉", "梅山鄉", "番路鄉", "大埔鄉", "阿里山鄉"],
-            "臺南市": ["中西區", "東區", "南區", "北區", "安平區", "安南區", "永康區", "歸仁區", "新化區", "左鎮區", "玉井區", "楠西區", "南化區", "仁德區", "關廟區", "龍崎區", "官田區", "麻豆區", "佳里區", "西港區", "七股區", "將軍區", "學甲區", "北門區", "新營區", "後壁區", "白河區", "東山區", "六甲區", "下營區", "柳營區", "鹽水區", "善化區", "大內區", "山上區", "新市區", "安定區"],
-            "高雄市": ["楠梓區", "左營區", "鼓山區", "三民區", "鹽埕區", "前金區", "新興區", "苓雅區", "前鎮區", "旗津區", "小港區", "鳳山區", "林園區", "大寮區", "大樹區", "大社區", "仁武區", "鳥松區", "岡山區", "橋頭區", "燕巢區", "田寮區", "阿蓮區", "路竹區", "湖內區", "茄萣區", "永安區", "彌陀區", "梓官區", "旗山區", "美濃區", "六龜區", "甲仙區", "杉林區", "內門區", "茂林區", "桃源區", "那瑪夏區"],
-            "屏東縣": ["屏東市", "潮州鎮", "東港鎮", "恆春鎮", "萬丹鄉", "長治鄉", "麟洛鄉", "九如鄉", "里港鄉", "鹽埔鄉", "高樹鄉", "萬巒鄉", "內埔鄉", "竹田鄉", "新埤鄉", "枋寮鄉", "新園鄉", "崁頂鄉", "林邊鄉", "南州鄉", "佳冬鄉", "琉球鄉", "車城鄉", "滿州鄉", "枋山鄉", "三地門鄉", "霧臺鄉", "瑪家鄉", "泰武鄉", "來義鄉", "春日鄉", "獅子鄉", "牡丹鄉"],
-            "宜蘭縣": ["宜蘭市", "羅東鎮", "蘇澳鎮", "頭城鎮", "礁溪鄉", "壯圍鄉", "員山鄉", "冬山鄉", "五結鄉", "三星鄉", "大同鄉", "南澳鄉"],
-            "花蓮縣": ["花蓮市", "鳳林鎮", "玉里鎮", "新城鄉", "吉安鄉", "壽豐鄉", "光復鄉", "豐濱鄉", "瑞穗鄉", "富里鄉", "秀林鄉", "萬榮鄉", "卓溪鄉"],
-            "臺東縣": ["臺東市", "成功鎮", "關山鎮", "卑南鄉", "大武鄉", "太麻里鄉", "東河鄉", "長濱鄉", "鹿野鄉", "池上鄉", "綠島鄉", "蘭嶼鄉", "延平鄉", "金峰鄉", "達仁鄉", "海端鄉"],
-            "澎湖縣": ["馬公市", "湖西鄉", "白沙鄉", "西嶼鄉", "望安鄉", "七美鄉"],
-            "金門縣": ["金城鎮", "金湖鎮", "金沙鎮", "金寧鄉", "烈嶼鄉", "烏坵鄉"],
-            "連江縣": ["南竿鄉", "北竿鄉", "莒光鄉", "東引鄉"]
-        };
-
-        const COMMON_ROADS = [
-            "中正路", "中山路", "中華路", "中華東路", "中華西路", "中華北路", "中華南路",
-            "民族路", "民權路", "民生路", "成功路", "西門路", "北門路", "東門路", "南門路",
-            "大同路", "開元路", "長榮路", "林森路", "東寧路", "裕農路", "小東路", "海安路",
-            "金華路", "安平路", "安和路", "安中路", "北安路", "大灣路", "永大路", "中興路", "復興路"
-        ];
-
+        // --- Constants ---
         const CMF_FIELDS = [
             { key: 'CID1', label: '客戶編號', type: 'text', required: true },
             { key: 'NAME', label: '客戶姓名', type: 'text', required: true },
             { key: 'SEX', label: '性別', type: 'select', options: ['男', '女', '其他'] },
             { key: 'TEL', label: '電話', type: 'tel' },
             { key: 'BIRDATE', label: '生日', type: 'date' },
-            { key: 'ADDRESS', label: '地址', type: 'address', className: 'col-span-2' },
+            { key: 'ADDRESS', label: '地址', type: 'text', className: 'col-span-2' }, // Reverted to text
             { key: 'INDATE', label: '初訪日期', type: 'date' },
             { key: 'LASTD', label: '最後日期', type: 'date' },
             { key: 'CLASS', label: '備考', type: 'text' },
@@ -265,16 +231,11 @@
             const [mode, setMode] = useState('add');
             const [isViewOnly, setIsViewOnly] = useState(false); 
 
-            const [addrCity, setAddrCity] = useState('臺南市'); 
-            const [addrDist, setAddrDist] = useState('');
-            const [addrRoad, setAddrRoad] = useState('');
-            const [addrDetail, setAddrDetail] = useState('');
-
             const [systemUsers, setSystemUsers] = useState([]);
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
 
-            // Cache counts
+            // Memoize Prescription Counts
             const prxCounts = useMemo(() => {
                 const counts = {};
                 if(Array.isArray(allPrescriptions)) {
@@ -373,7 +334,7 @@
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
                 
-                // Limit results to prevent crash
+                // Safety limit
                 if (filtered.length > 100) {
                     showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 100 筆。`, 'error');
                     setFilteredCustomers(filtered.slice(0, 100));
@@ -387,15 +348,13 @@
             const openCustomerModal = (c) => { 
                 setMode(c ? 'edit' : 'add'); 
                 setEditingData(c ? {...c} : {CID1:'', NAME:'', SEX:'男', INDATE: new Date().toISOString().split('T')[0], ADDRESS: ''}); 
-                setAddrCity('臺南市'); setAddrDist(''); setAddrRoad(''); setAddrDetail(c ? (c.ADDRESS || '') : '');
                 setIsCustomerModalOpen(true); 
             };
 
             const saveCustomer = async () => {
                 if(!isAdmin) return;
                 setLoading(true);
-                const finalAddr = (addrCity + addrDist + addrRoad + addrDetail).trim();
-                const dataToSave = { ...editingData, ADDRESS: finalAddr || editingData.ADDRESS };
+                const dataToSave = { ...editingData }; // Simple save
 
                 try {
                     let newCustomer = null;
@@ -426,8 +385,10 @@
             const openPrxModal = (p = null, customerOverride = null) => {
                 const targetCustomer = customerOverride || selectedCustomer;
                 if (!targetCustomer) return;
+                
                 const isView = !isAdmin && p !== null;
                 setIsViewOnly(isView);
+
                 setMode(p ? 'edit' : 'add');
                 setEditingData(p ? {...p} : {
                     CID1: targetCustomer.CID1, 
@@ -467,7 +428,7 @@
             const removeUser = async (id) => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id)); fetchSystemUsers(); };
             const updateUserRole = async (id, role) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {role}); showMsg('已更新', 'success'); fetchSystemUsers(); };
 
-            // CSV
+            // CSV Export
             const exportCSV = (type) => {
                 const data = type === 'CMF' ? customers : allPrescriptions;
                 if (!data.length) { alert('無資料'); return; }
@@ -482,10 +443,9 @@
 
             const showMsg = (text, type) => { setMsg({ text, type }); setTimeout(() => setMsg({ text: '', type: '' }), 3000); };
 
-            // Render
             if (!user) return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
-                    {authError && authError.type === 'domain' && (
+                    {authError && (
                         <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
                             <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
                                 <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">⚠️ 網域授權錯誤</h3>
@@ -648,25 +608,7 @@
                                 {CMF_FIELDS.map(field => (
                                     <div key={field.key} className={field.className}>
                                         <label className="block text-sm font-bold text-gray-500 mb-1">{field.label}</label>
-                                        {field.key === 'ADDRESS' ? (
-                                            <div className="space-y-2">
-                                                <div className="flex space-x-2">
-                                                    <select className="border p-1 rounded w-1/3" value={addrCity} onChange={e => {setAddrCity(e.target.value); setAddrDist('');}}>
-                                                        <option value="">縣市</option>
-                                                        {Object.keys(TAIWAN_CITIES).map(c => <option key={c} value={c}>{c}</option>)}
-                                                    </select>
-                                                    <select className="border p-1 rounded w-1/3" value={addrDist} onChange={e => setAddrDist(e.target.value)}>
-                                                        <option value="">鄉鎮市區</option>
-                                                        {addrCity && TAIWAN_CITIES[addrCity]?.map(d => <option key={d} value={d}>{d}</option>)}
-                                                    </select>
-                                                    <div className="w-1/3">
-                                                        <input list="common-roads" className="border p-1 rounded w-full" placeholder="道路 (可選/輸)" value={addrRoad} onChange={e => setAddrRoad(e.target.value)} />
-                                                        <datalist id="common-roads">{COMMON_ROADS.map(r => <option key={r} value={r} />)}</datalist>
-                                                    </div>
-                                                </div>
-                                                <input className="border w-full p-1 rounded" placeholder="詳細地址 (巷/弄/號/樓)" value={addrDetail} onChange={e => setAddrDetail(e.target.value)} />
-                                            </div>
-                                        ) : field.type === 'select' ? (
+                                        {field.type === 'select' ? (
                                             <select className="border w-full p-1 rounded" value={editingData[field.key]||'男'} onChange={e=>setEditingData({...editingData,[field.key]:e.target.value})}>{field.options.map(o=><option key={o} value={o}>{o}</option>)}</select>
                                         ) : (
                                             <input type={field.type} className="border w-full p-1 rounded" value={editingData[field.key]||''} onChange={e=>setEditingData({...editingData,[field.key]:e.target.value})} required={field.required} />
