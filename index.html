@@ -15,6 +15,9 @@
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- PapaParse (CSV Parser) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -39,7 +42,6 @@
             onSnapshot
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Expose to window for React component
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
             getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, query, where, onSnapshot
@@ -52,7 +54,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // *** 設定：Google Apps Script 網頁應用程式網址 (僅用於 CMF/PRXMF) ***
+        // *** 設定：Google Apps Script 網頁應用程式網址 ***
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzcbRhUDh4UsPA0Mn7QnKsD0hkLeo-xrTXb2LHwKLUZHuYOBfGh-xVYeNyIoJXHxQT9/exec"; 
 
         // --- Firebase Configuration ---
@@ -75,7 +77,7 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-        // --- API Services (Google Sheets for Data) ---
+        // --- API Services (Google Sheets) ---
         const apiService = {
             read: async (sheet) => {
                 const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
@@ -105,7 +107,7 @@
             }
         };
 
-        // --- Icons Definition ---
+        // --- Icons ---
         const Icon = ({ children, className, ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
         );
@@ -119,11 +121,9 @@
         const Settings = (props) => <Icon {...props}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></Icon>;
         const Database = (props) => <Icon {...props}><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></Icon>;
         const Eye = (props) => <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></Icon>;
-        const FileText = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></Icon>;
-        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></Icon>;
         const Lock = (props) => <Icon {...props}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></Icon>;
 
-        // --- Taiwan City Data (Simplified) ---
+        // --- Taiwan City Data ---
         const TAIWAN_CITIES = {
             "臺北市": ["中正區", "大同區", "中山區", "松山區", "大安區", "萬華區", "信義區", "士林區", "北投區", "內湖區", "南港區", "文山區"],
             "新北市": ["板橋區", "新莊區", "中和區", "永和區", "土城區", "樹林區", "三峽區", "鶯歌區", "三重區", "蘆洲區", "五股區", "泰山區", "林口區", "淡水區", "八里區", "三芝區", "石門區", "汐止區", "金山區", "萬里區", "瑞芳區", "平溪區", "雙溪區", "貢寮區", "新店區", "坪林區", "烏來區", "深坑區", "石碇區"],
@@ -149,14 +149,22 @@
             "連江縣": ["南竿鄉", "北竿鄉", "莒光鄉", "東引鄉"]
         };
 
-        // --- Constants & Field Definitions ---
+        // Common Roads for Tainan (DataList Options)
+        const COMMON_ROADS = [
+            "中正路", "中山路", "中華路", "中華東路", "中華西路", "中華北路", "中華南路",
+            "民族路", "民權路", "民生路", "成功路", "西門路", "北門路", "東門路", "南門路",
+            "大同路", "開元路", "長榮路", "林森路", "東寧路", "裕農路", "小東路", "海安路",
+            "金華路", "安平路", "安和路", "安中路", "北安路", "大灣路", "永大路", "中興路", "復興路"
+        ];
+
+        // --- Constants ---
         const CMF_FIELDS = [
             { key: 'CID1', label: '客戶編號', type: 'text', required: true },
             { key: 'NAME', label: '客戶姓名', type: 'text', required: true },
             { key: 'SEX', label: '性別', type: 'select', options: ['男', '女', '其他'] },
             { key: 'TEL', label: '電話', type: 'tel' },
             { key: 'BIRDATE', label: '生日', type: 'date' },
-            { key: 'ADDRESS', label: '地址', type: 'address', className: 'col-span-2' }, // Custom Type
+            { key: 'ADDRESS', label: '地址', type: 'address', className: 'col-span-2' },
             { key: 'INDATE', label: '初訪日期', type: 'date' },
             { key: 'LASTD', label: '最後日期', type: 'date' },
             { key: 'CLASS', label: '備考', type: 'text' },
@@ -171,9 +179,9 @@
             </div>
         );
 
-        const Modal = ({ title, onClose, children }) => (
+        const Modal = ({ title, onClose, children, size = 'default' }) => (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                <div className={`bg-white rounded-lg shadow-xl w-full ${size === 'large' ? 'max-w-6xl' : 'max-w-4xl'} max-h-[90vh] overflow-y-auto`}>
                     <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
                         <h3 className="text-xl font-bold text-gray-800">{title}</h3>
                         <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
@@ -205,17 +213,19 @@
             const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
             const [editingData, setEditingData] = useState({});
             const [mode, setMode] = useState('add');
+            const [isViewOnly, setIsViewOnly] = useState(false); // Check if opening in view-only mode
 
-            // Address Selector State
-            const [addrCity, setAddrCity] = useState('');
+            // Address State
+            const [addrCity, setAddrCity] = useState('臺南市'); // Default Tainan
             const [addrDist, setAddrDist] = useState('');
+            const [addrRoad, setAddrRoad] = useState('');
             const [addrDetail, setAddrDetail] = useState('');
 
             const [systemUsers, setSystemUsers] = useState([]);
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
 
-            // --- Authentication ---
+            // --- Auth ---
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
@@ -301,15 +311,14 @@
                 setMode(c ? 'edit' : 'add'); 
                 setEditingData(c ? {...c} : {CID1:'', NAME:'', SEX:'男', INDATE: new Date().toISOString().split('T')[0], ADDRESS: ''}); 
                 // Reset address parts
-                setAddrCity(''); setAddrDist(''); setAddrDetail(c ? (c.ADDRESS || '') : '');
+                setAddrCity('臺南市'); setAddrDist(''); setAddrRoad(''); setAddrDetail(c ? (c.ADDRESS || '') : '');
                 setIsCustomerModalOpen(true); 
             };
 
             const saveCustomer = async () => {
                 if(!isAdmin) return;
                 setLoading(true);
-                // Combine address
-                const finalAddr = (addrCity + addrDist + addrDetail).trim();
+                const finalAddr = (addrCity + addrDist + addrRoad + addrDetail).trim();
                 const dataToSave = { ...editingData, ADDRESS: finalAddr || editingData.ADDRESS };
 
                 try {
@@ -322,11 +331,10 @@
                     
                     setIsCustomerModalOpen(false); 
                     showMsg('儲存成功', 'success'); 
-                    await fetchData(); // Ensure data is sync before opening prx
+                    await fetchData(); 
 
-                    // Requirement 1: If add mode, immediately open Prx modal
+                    // Auto open Prx modal if new customer
                     if(mode === 'add' && newCustomer) {
-                        // Wait a tick for data refresh, then open
                         setSelectedCustomer(newCustomer);
                         setTimeout(() => openPrxModal(null, newCustomer), 500); 
                     } else if (hasSearched) handleSearch();
@@ -343,6 +351,11 @@
             const openPrxModal = (p = null, customerOverride = null) => {
                 const targetCustomer = customerOverride || selectedCustomer;
                 if (!targetCustomer) return;
+                
+                // Allow non-admins to open if p exists (View Mode)
+                const isView = !isAdmin && p !== null;
+                setIsViewOnly(isView);
+
                 setMode(p ? 'edit' : 'add');
                 setEditingData(p ? {...p} : {
                     CID1: targetCustomer.CID1, 
@@ -354,7 +367,7 @@
             };
 
             const savePrx = async () => {
-                if(!isAdmin) return;
+                if(!isAdmin) return; // Guard
                 setLoading(true);
                 try {
                     if (mode === 'add') await apiService.create('PRXMF', editingData);
@@ -378,11 +391,7 @@
                 setSystemUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             };
-            const addUser = async (email) => {
-                if (!email) return;
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sys_users'), {email, role:'user', addedAt: new Date().toISOString()});
-                fetchSystemUsers();
-            };
+            const addUser = async (email) => { if (!email) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sys_users'), {email, role:'user', addedAt: new Date().toISOString()}); fetchSystemUsers(); };
             const removeUser = async (id) => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id)); fetchSystemUsers(); };
             const updateUserRole = async (id, role) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {role}); showMsg('已更新', 'success'); fetchSystemUsers(); };
 
@@ -391,38 +400,19 @@
                 const data = type === 'CMF' ? customers : allPrescriptions;
                 if (!data.length) { alert('無資料'); return; }
                 const sorted = [...data].sort((a, b) => String(a.CID1||'').localeCompare(String(b.CID1||''), undefined, {numeric: true}));
-                const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key); // PRXMF_FIELDS is just for reference, actual logic below
-                
-                // Requirement 2: Filename format
                 const today = new Date().toISOString().split('T')[0];
                 const filename = `${type}_${today}.csv`;
-
-                // Handle header specific logic
-                let exportHeaders = [];
-                if(type === 'CMF') exportHeaders = CMF_FIELDS.map(f => f.key);
-                else {
-                    // For PRXMF, gather keys from a superset or defined list
-                    // User requested specific export? "匯出CSV資料請依據CID1排序" is done.
-                    // Just use all keys from data or standard set. Let's use the object keys from first row + standard fields to be safe.
-                    // Or stick to PRXMF_FIELDS keys but add CID1/NAME if missing
-                    exportHeaders = ['CID1', 'NAME', ...PRXMF_FIELDS.map(f => f.key)];
-                }
-
-                const content = [
-                    exportHeaders.join(','), 
-                    ...sorted.map(row => exportHeaders.map(f => `"${String(row[f]||'').replace(/"/g,'""')}"`).join(','))
-                ].join('\n');
-                
+                let exportHeaders = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : ['CID1', 'NAME', ...PRXMF_FIELDS.map(f => f.key)];
+                const content = [exportHeaders.join(','), ...sorted.map(row => exportHeaders.map(f => `"${String(row[f]||'').replace(/"/g,'""')}"`).join(','))].join('\n');
                 const url = URL.createObjectURL(new Blob(["\uFEFF"+content], {type:'text/csv;charset=utf-8'}));
                 const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
             };
 
             const showMsg = (text, type) => { setMsg({ text, type }); setTimeout(() => setMsg({ text: '', type: '' }), 3000); };
 
-            // Render
             if (!user) return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
-                    {authError && authError.type === 'domain' && (
+                    {authError && (
                         <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
                             <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
                                 <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">⚠️ 網域授權錯誤</h3>
@@ -486,7 +476,10 @@
                                                         <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{c.NAME}</td>
                                                         <td className="p-2 text-center">{c.SEX}</td><td className="p-2">{c.TEL}</td><td className="p-2">{c.BIRDATE}</td>
                                                         <td className="p-2 text-center font-bold">{getPrxCount(c.CID1)}</td>
-                                                        <td className="p-2 flex gap-2">{isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}</td>
+                                                        <td className="p-2 flex gap-2">
+                                                            <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
+                                                            {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
+                                                        </td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -496,7 +489,7 @@
                             </div>
                         ) : selectedCustomer ? (
                             <div className="space-y-6 fade-in">
-                                {/* Customer Info */}
+                                {/* Info Card */}
                                 <div className="bg-white p-6 rounded shadow-lg border-l-4 border-blue-600 relative">
                                     <div className="flex justify-between items-start mb-4">
                                         <h2 className="text-2xl font-bold text-gray-800">{selectedCustomer.NAME} <span className="text-lg text-gray-500 font-normal">({selectedCustomer.CID1})</span></h2>
@@ -509,44 +502,41 @@
                                         <div className="col-span-3 bg-gray-50 p-2">備考: {selectedCustomer.CLASS} {selectedCustomer.CLASS1}</div>
                                     </div>
                                 </div>
-                                {/* Prx List with new layout */}
+                                {/* Prx List */}
                                 <div className="bg-white p-4 rounded shadow">
-                                    <div className="flex justify-between mb-4 border-b pb-2"><h3 className="font-bold flex items-center"><Database className="mr-2"/> 驗光紀錄</h3>{isAdmin && <button onClick={()=>openPrxModal()} className="bg-green-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                    <div className="flex justify-between mb-4 border-b pb-2"><h3 className="font-bold flex items-center"><Database className="mr-2"/> 驗光紀錄</h3>{isAdmin && <button onClick={()=>openPrxModal()} className="bg-green-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增驗光</button>}</div>
                                     <div className="space-y-4">
                                         {customerPrescriptions.map(p => (
                                             <div key={p.id} className="border rounded-lg p-4 hover:shadow-md bg-white">
                                                 <div className="flex justify-between font-bold mb-3 border-b pb-1">
                                                     <span className="text-blue-800 text-lg">{p.DATE}</span>
-                                                    {isAdmin && <div className="flex gap-2"><button onClick={()=>openPrxModal(p)} className="text-blue-600 text-sm"><Edit className="inline w-4 h-4"/> 編輯</button><button onClick={()=>deletePrx(p.id)} className="text-red-600 text-sm"><Trash2 className="inline w-4 h-4"/> 刪除</button></div>}
+                                                    <div className="flex gap-2">
+                                                        <button onClick={()=>openPrxModal(p)} className="text-blue-600 text-sm flex items-center hover:bg-gray-100 p-1 rounded"><Eye className="w-4 h-4 mr-1"/> {isAdmin ? '編輯' : '詳細'}</button>
+                                                        {isAdmin && <button onClick={()=>deletePrx(p.id)} className="text-red-600 text-sm flex items-center hover:bg-gray-100 p-1 rounded"><Trash2 className="w-4 h-4 mr-1"/> 刪除</button>}
+                                                    </div>
                                                 </div>
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                                    {/* Right Eye */}
                                                     <div className="bg-red-50 p-3 rounded border border-red-100">
                                                         <div className="font-bold text-red-800 mb-2 border-b border-red-200">右眼 (R)</div>
-                                                        <div className="grid grid-cols-3 gap-2">
-                                                            <div><span className="text-gray-500 text-xs block">SPH</span>{p.RSPH}</div>
-                                                            <div><span className="text-gray-500 text-xs block">CYL</span>{p.RCYL}</div>
-                                                            <div><span className="text-gray-500 text-xs block">AXIS</span>{p.RAXIS}</div>
-                                                            <div><span className="text-gray-500 text-xs block">ADD</span>{p.RADD}</div>
-                                                            <div className="col-span-2"><span className="text-gray-500 text-xs block">隱形 (ITEM)</span>{p.RITEM}</div>
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{p.RSPH}</div>
+                                                            <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{p.RCYL}</div>
+                                                            <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{p.RAXIS}</div>
+                                                            <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{p.RADD}</div>
                                                         </div>
                                                     </div>
-                                                    {/* Left Eye */}
                                                     <div className="bg-blue-50 p-3 rounded border border-blue-100">
                                                         <div className="font-bold text-blue-800 mb-2 border-b border-blue-200">左眼 (L)</div>
-                                                        <div className="grid grid-cols-3 gap-2">
-                                                            <div><span className="text-gray-500 text-xs block">SPH</span>{p.LSPH}</div>
-                                                            <div><span className="text-gray-500 text-xs block">CYL</span>{p.LCYL}</div>
-                                                            <div><span className="text-gray-500 text-xs block">AXIS</span>{p.LAXIS}</div>
-                                                            <div><span className="text-gray-500 text-xs block">ADD</span>{p.LADD}</div>
-                                                            <div className="col-span-2"><span className="text-gray-500 text-xs block">隱形 (ITEM)</span>{p.LITEM}</div>
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{p.LSPH}</div>
+                                                            <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{p.LCYL}</div>
+                                                            <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{p.LAXIS}</div>
+                                                            <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{p.LADD}</div>
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="mt-3 text-xs text-gray-600 grid grid-cols-2 md:grid-cols-4 gap-2 bg-gray-50 p-2 rounded">
-                                                    <div>PD: {p.PD}</div><div>AGE: {p.AGE}</div>
-                                                    <div className="col-span-2">ITEM: {p.ITEM}</div>
-                                                    <div className="col-span-2 md:col-span-4 border-t pt-1">備註: {p.REMARK} {p.REMARK2} {p.REMARK3}</div>
+                                                <div className="mt-3 text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                                                    ITEM: {p.ITEM} | R-ITEM: {p.RITEM} | L-ITEM: {p.LITEM} | 備註: {p.REMARK}
                                                 </div>
                                             </div>
                                         ))}
@@ -585,17 +575,20 @@
                                         {field.key === 'ADDRESS' ? (
                                             <div className="space-y-2">
                                                 <div className="flex space-x-2">
-                                                    <select className="border p-1 rounded w-1/2" value={addrCity} onChange={e => {setAddrCity(e.target.value); setAddrDist('');}}>
+                                                    <select className="border p-1 rounded w-1/3" value={addrCity} onChange={e => {setAddrCity(e.target.value); setAddrDist('');}}>
                                                         <option value="">縣市</option>
                                                         {Object.keys(TAIWAN_CITIES).map(c => <option key={c} value={c}>{c}</option>)}
                                                     </select>
-                                                    <select className="border p-1 rounded w-1/2" value={addrDist} onChange={e => setAddrDist(e.target.value)}>
+                                                    <select className="border p-1 rounded w-1/3" value={addrDist} onChange={e => setAddrDist(e.target.value)}>
                                                         <option value="">鄉鎮市區</option>
                                                         {addrCity && TAIWAN_CITIES[addrCity]?.map(d => <option key={d} value={d}>{d}</option>)}
                                                     </select>
+                                                    <div className="w-1/3">
+                                                        <input list="common-roads" className="border p-1 rounded w-full" placeholder="道路 (可選/輸)" value={addrRoad} onChange={e => setAddrRoad(e.target.value)} />
+                                                        <datalist id="common-roads">{COMMON_ROADS.map(r => <option key={r} value={r} />)}</datalist>
+                                                    </div>
                                                 </div>
-                                                <input className="border w-full p-1 rounded" placeholder="詳細地址 (路/街/號/樓)" value={addrDetail} onChange={e => setAddrDetail(e.target.value)} />
-                                                <input type="hidden" value={addrCity + addrDist + addrDetail} />
+                                                <input className="border w-full p-1 rounded" placeholder="詳細地址 (巷/弄/號/樓)" value={addrDetail} onChange={e => setAddrDetail(e.target.value)} />
                                             </div>
                                         ) : field.type === 'select' ? (
                                             <select className="border w-full p-1 rounded" value={editingData[field.key]||'男'} onChange={e=>setEditingData({...editingData,[field.key]:e.target.value})}>{field.options.map(o=><option key={o} value={o}>{o}</option>)}</select>
@@ -612,10 +605,11 @@
                         </Modal>
                     )}
 
-                    {/* Prx Modal (New Layout) */}
+                    {/* Prx Modal (New Layout - Full Fields) */}
                     {isPrxModalOpen && (
-                        <Modal title={mode === 'add' ? "新增驗光資料" : "編輯驗光資料"} onClose={() => setIsPrxModalOpen(false)}>
-                            <form onSubmit={(e) => { e.preventDefault(); savePrx(); }} className="space-y-4">
+                        <Modal title={isViewOnly ? "驗光資料 (唯讀)" : (mode === 'add' ? "新增驗光資料" : "編輯驗光資料")} onClose={() => setIsPrxModalOpen(false)} size="large">
+                            <form onSubmit={(e) => { e.preventDefault(); if(!isViewOnly) savePrx(); }} className="space-y-4">
+                                <fieldset disabled={isViewOnly} className="space-y-4">
                                 {/* Common Info */}
                                 <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 rounded">
                                     <div><label className="text-xs font-bold text-gray-500">日期</label><input type="date" className="border w-full rounded p-1" value={editingData.DATE||''} onChange={e=>setEditingData({...editingData, DATE:e.target.value})} /></div>
@@ -626,41 +620,54 @@
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {/* Right Eye Input */}
                                     <div className="border border-red-200 rounded p-3 bg-red-50">
-                                        <div className="font-bold text-red-800 mb-2 border-b border-red-200">右眼 (R)</div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <div><label className="text-xs">SPH</label><input className="border w-full rounded p-1" value={editingData.RSPH||''} onChange={e=>setEditingData({...editingData, RSPH:e.target.value})} /></div>
-                                            <div><label className="text-xs">CYL</label><input className="border w-full rounded p-1" value={editingData.RCYL||''} onChange={e=>setEditingData({...editingData, RCYL:e.target.value})} /></div>
-                                            <div><label className="text-xs">AXIS</label><input className="border w-full rounded p-1" value={editingData.RAXIS||''} onChange={e=>setEditingData({...editingData, RAXIS:e.target.value})} /></div>
-                                            <div><label className="text-xs">ADD</label><input className="border w-full rounded p-1" value={editingData.RADD||''} onChange={e=>setEditingData({...editingData, RADD:e.target.value})} /></div>
-                                            <div className="col-span-2"><label className="text-xs">隱形 (ITEM)</label><input className="border w-full rounded p-1" value={editingData.RITEM||''} onChange={e=>setEditingData({...editingData, RITEM:e.target.value})} /></div>
+                                        <div className="font-bold text-red-800 mb-2 border-b border-red-200 text-lg">右眼 (R)</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div><label className="text-xs">球面 (SPH)</label><input className="border w-full rounded p-1" value={editingData.RSPH||''} onChange={e=>setEditingData({...editingData, RSPH:e.target.value})} /></div>
+                                            <div><label className="text-xs">散光 (CYL)</label><input className="border w-full rounded p-1" value={editingData.RCYL||''} onChange={e=>setEditingData({...editingData, RCYL:e.target.value})} /></div>
+                                            <div><label className="text-xs">角度 (AXIS)</label><input className="border w-full rounded p-1" value={editingData.RAXIS||''} onChange={e=>setEditingData({...editingData, RAXIS:e.target.value})} /></div>
+                                            <div><label className="text-xs">老花 (ADD)</label><input className="border w-full rounded p-1" value={editingData.RADD||''} onChange={e=>setEditingData({...editingData, RADD:e.target.value})} /></div>
+                                            <div><label className="text-xs">H-Prism (RBCH)</label><input className="border w-full rounded p-1" value={editingData.RBCH||''} onChange={e=>setEditingData({...editingData, RBCH:e.target.value})} /></div>
+                                            <div><label className="text-xs">V-Prism (RBCV)</label><input className="border w-full rounded p-1" value={editingData.RBCV||''} onChange={e=>setEditingData({...editingData, RBCV:e.target.value})} /></div>
+                                            <div><label className="text-xs">矯正前 (VA1)</label><input className="border w-full rounded p-1" value={editingData.RBRVISE1||''} onChange={e=>setEditingData({...editingData, RBRVISE1:e.target.value})} /></div>
+                                            <div><label className="text-xs">矯正後 (VA2)</label><input className="border w-full rounded p-1" value={editingData.RBRVISE2||''} onChange={e=>setEditingData({...editingData, RBRVISE2:e.target.value})} /></div>
+                                            <div className="col-span-3"><label className="text-xs">隱形眼鏡 (R-ITEM)</label><input className="border w-full rounded p-1" value={editingData.RITEM||''} onChange={e=>setEditingData({...editingData, RITEM:e.target.value})} /></div>
                                         </div>
                                     </div>
                                     {/* Left Eye Input */}
                                     <div className="border border-blue-200 rounded p-3 bg-blue-50">
-                                        <div className="font-bold text-blue-800 mb-2 border-b border-blue-200">左眼 (L)</div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <div><label className="text-xs">SPH</label><input className="border w-full rounded p-1" value={editingData.LSPH||''} onChange={e=>setEditingData({...editingData, LSPH:e.target.value})} /></div>
-                                            <div><label className="text-xs">CYL</label><input className="border w-full rounded p-1" value={editingData.LCYL||''} onChange={e=>setEditingData({...editingData, LCYL:e.target.value})} /></div>
-                                            <div><label className="text-xs">AXIS</label><input className="border w-full rounded p-1" value={editingData.LAXIS||''} onChange={e=>setEditingData({...editingData, LAXIS:e.target.value})} /></div>
-                                            <div><label className="text-xs">ADD</label><input className="border w-full rounded p-1" value={editingData.LADD||''} onChange={e=>setEditingData({...editingData, LADD:e.target.value})} /></div>
-                                            <div className="col-span-2"><label className="text-xs">隱形 (ITEM)</label><input className="border w-full rounded p-1" value={editingData.LITEM||''} onChange={e=>setEditingData({...editingData, LITEM:e.target.value})} /></div>
+                                        <div className="font-bold text-blue-800 mb-2 border-b border-blue-200 text-lg">左眼 (L)</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div><label className="text-xs">球面 (SPH)</label><input className="border w-full rounded p-1" value={editingData.LSPH||''} onChange={e=>setEditingData({...editingData, LSPH:e.target.value})} /></div>
+                                            <div><label className="text-xs">散光 (CYL)</label><input className="border w-full rounded p-1" value={editingData.LCYL||''} onChange={e=>setEditingData({...editingData, LCYL:e.target.value})} /></div>
+                                            <div><label className="text-xs">角度 (AXIS)</label><input className="border w-full rounded p-1" value={editingData.LAXIS||''} onChange={e=>setEditingData({...editingData, LAXIS:e.target.value})} /></div>
+                                            <div><label className="text-xs">老花 (ADD)</label><input className="border w-full rounded p-1" value={editingData.LADD||''} onChange={e=>setEditingData({...editingData, LADD:e.target.value})} /></div>
+                                            <div><label className="text-xs">H-Prism (LBCH)</label><input className="border w-full rounded p-1" value={editingData.LBCH||''} onChange={e=>setEditingData({...editingData, LBCH:e.target.value})} /></div>
+                                            <div><label className="text-xs">V-Prism (LBCV)</label><input className="border w-full rounded p-1" value={editingData.LBCV||''} onChange={e=>setEditingData({...editingData, LBCV:e.target.value})} /></div>
+                                            <div><label className="text-xs">矯正前 (VA1)</label><input className="border w-full rounded p-1" value={editingData.LBRVISE1||''} onChange={e=>setEditingData({...editingData, LBRVISE1:e.target.value})} /></div>
+                                            <div><label className="text-xs">矯正後 (VA2)</label><input className="border w-full rounded p-1" value={editingData.LBRVISE2||''} onChange={e=>setEditingData({...editingData, LBRVISE2:e.target.value})} /></div>
+                                            <div className="col-span-3"><label className="text-xs">隱形眼鏡 (L-ITEM)</label><input className="border w-full rounded p-1" value={editingData.LITEM||''} onChange={e=>setEditingData({...editingData, LITEM:e.target.value})} /></div>
                                         </div>
                                     </div>
                                 </div>
 
                                 {/* Other Details */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                                    <div><label className="text-xs font-bold text-gray-500">PD</label><input className="border w-full rounded p-1" value={editingData.PD||''} onChange={e=>setEditingData({...editingData, PD:e.target.value})} /></div>
-                                    <div><label className="text-xs font-bold text-gray-500">年齡</label><input type="number" className="border w-full rounded p-1" value={editingData.AGE||''} onChange={e=>setEditingData({...editingData, AGE:e.target.value})} /></div>
-                                    <div className="col-span-2"><label className="text-xs font-bold text-gray-500">ITEM (一般)</label><input className="border w-full rounded p-1" value={editingData.ITEM||''} onChange={e=>setEditingData({...editingData, ITEM:e.target.value})} /></div>
-                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 1</label><input className="border w-full rounded p-1" value={editingData.REMARK||''} onChange={e=>setEditingData({...editingData, REMARK:e.target.value})} /></div>
-                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 2</label><input className="border w-full rounded p-1" value={editingData.REMARK2||''} onChange={e=>setEditingData({...editingData, REMARK2:e.target.value})} /></div>
-                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 3</label><input className="border w-full rounded p-1" value={editingData.REMARK3||''} onChange={e=>setEditingData({...editingData, REMARK3:e.target.value})} /></div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 border-t pt-4">
+                                    <div><label className="text-xs font-bold text-gray-500">瞳距 (PD)</label><input className="border w-full rounded p-1" value={editingData.PD||''} onChange={e=>setEditingData({...editingData, PD:e.target.value})} /></div>
+                                    <div><label className="text-xs font-bold text-gray-500">年齡 (AGE)</label><input type="number" className="border w-full rounded p-1" value={editingData.AGE||''} onChange={e=>setEditingData({...editingData, AGE:e.target.value})} /></div>
+                                    <div className="col-span-2"><label className="text-xs font-bold text-gray-500">鏡框/鏡片 (ITEM)</label><input className="border w-full rounded p-1" value={editingData.ITEM||''} onChange={e=>setEditingData({...editingData, ITEM:e.target.value})} /></div>
+                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 1 (REMARK)</label><input className="border w-full rounded p-1" value={editingData.REMARK||''} onChange={e=>setEditingData({...editingData, REMARK:e.target.value})} /></div>
+                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 2 (REMARK2)</label><input className="border w-full rounded p-1" value={editingData.REMARK2||''} onChange={e=>setEditingData({...editingData, REMARK2:e.target.value})} /></div>
+                                    <div className="col-span-2 md:col-span-4"><label className="text-xs font-bold text-gray-500">備註 3 (REMARK3)</label><input className="border w-full rounded p-1" value={editingData.REMARK3||''} onChange={e=>setEditingData({...editingData, REMARK3:e.target.value})} /></div>
                                 </div>
+                                </fieldset>
 
                                 <div className="flex justify-end space-x-3 pt-4 border-t">
-                                    <button type="button" onClick={() => setIsPrxModalOpen(false)} className="px-4 py-2 border rounded">取消</button>
-                                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                    <button type="button" onClick={() => setIsPrxModalOpen(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">
+                                        {isViewOnly ? "關閉" : "取消"}
+                                    </button>
+                                    {!isViewOnly && (
+                                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">儲存</button>
+                                    )}
                                 </div>
                             </form>
                         </Modal>
