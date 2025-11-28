@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鐘錶眼鏡客戶管理系統 (GAS + Firebase 混合版)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- PapaParse (CSV Parser) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInWithPopup, 
+            GoogleAuthProvider, 
+            signOut, 
+            onAuthStateChanged,
+            signInWithCustomToken,
+            signInAnonymously
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            setDoc, 
+            addDoc,
+            deleteDoc,
+            updateDoc,
+            getDocs, 
+            getDoc,
+            query, 
+            where,
+            onSnapshot,
+            writeBatch
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose to window for React component
+        window.firebaseModules = { 
+            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, 
+            signInWithCustomToken, signInAnonymously,
+            getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot, writeBatch
+        };
+    </script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // *** 設定：Google Apps Script 網頁應用程式網址 (僅用於 CMF/PRXMF) ***
+        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzcbRhUDh4UsPA0Mn7QnKsD0hkLeo-xrTXb2LHwKLUZHuYOBfGh-xVYeNyIoJXHxQT9/exec"; 
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDxtxWF-jQMMxvAeMjP5-HJ6y6_QBxLdsY",
+            authDomain: "test1-1246d.firebaseapp.com",
+            projectId: "test1-1246d",
+            storageBucket: "test1-1246d.firebasestorage.app",
+            messagingSenderId: "1046567528056",
+            appId: "1:1046567528056:web:4e34594985c21d8892af8d",
+            measurementId: "G-8JNGR22WDW"
+        };
+
+        // --- Initialize Firebase ---
+        const { initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } = window.firebaseModules;
+        const { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, getDoc, query, where, onSnapshot, writeBatch } = window.firebaseModules;
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- API Services (Google Sheets for Data) ---
+        const apiService = {
+            read: async (sheet) => {
+                const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
+                const json = await res.json();
+                return json.status === 'success' ? json.data : [];
+            },
+            create: async (sheet, data) => {
+                const res = await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'create', sheet, data })
+                });
+                return await res.json();
+            },
+            createBatch: async (sheet, dataArray) => {
+                const res = await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'createBatch', sheet, data: dataArray })
+                });
+                return await res.json();
+            },
+            update: async (sheet, id, data) => {
+                const res = await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'update', sheet, id, data })
+                });
+                return await res.json();
+            },
+            delete: async (sheet, id) => {
+                const res = await fetch(GAS_API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'delete', sheet, id })
+                });
+                return await res.json();
+            }
+        };
+
+        // --- Icons Definition ---
+        const Icon = ({ children, className, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+        const Search = (props) => <Icon {...props}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></Icon>;
+        const Plus = (props) => <Icon {...props}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></Icon>;
+        const Trash2 = (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></Icon>;
+        const Edit = (props) => <Icon {...props}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></Icon>;
+        const Save = (props) => <Icon {...props}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></Icon>;
+        const User = (props) => <Icon {...props}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></Icon>;
+        const LogOut = (props) => <Icon {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></Icon>;
+        const FileSpreadsheet = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M8 13h2"></path><path d="M8 17h2"></path><path d="M14 13h2"></path><path d="M14 17h2"></path></Icon>;
+        const Settings = (props) => <Icon {...props}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></Icon>;
+        const Database = (props) => <Icon {...props}><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></Icon>;
+        const Eye = (props) => <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></Icon>;
+        const FileText = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></Icon>;
+        const Sparkles = (props) => <Icon {...props}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></Icon>;
+        const MessageSquare = (props) => <Icon {...props}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></Icon>;
+        const Lock = (props) => <Icon {...props}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></Icon>;
+
+        // --- Gemini API Helper ---
+        const callGeminiAPI = async (prompt) => {
+            const apiKey = ""; // Runtime provided
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || "無法產生 AI 回應";
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                return "發生錯誤，請稍後再試";
+            }
+        };
+
+        // --- Field Configs ---
+        const CMF_FIELDS = [
+            { key: 'CID1', label: '客戶編號', type: 'text', required: true },
+            { key: 'NAME', label: '客戶姓名', type: 'text', required: true },
+            { key: 'SEX', label: '性別', type: 'select', options: ['男', '女', '其他'] },
+            { key: 'TEL', label: '電話', type: 'tel' },
+            { key: 'BIRDATE', label: '生日', type: 'date' },
+            { key: 'ADDRESS', label: '地址', type: 'text', className: 'col-span-2' },
+            { key: 'INDATE', label: '初訪日期', type: 'date' },
+            { key: 'LASTD', label: '最後日期', type: 'date' },
+            { key: 'CLASS', label: '備考', type: 'text' },
+            { key: 'CLASS1', label: '備考1', type: 'text' },
+            { key: 'SUM', label: '總計', type: 'number' },
+        ];
+
+        const PRXMF_FIELDS = [
+            { key: 'DATE', label: '登錄日期', type: 'date' },
+            { key: 'RSPH', label: '右眼球面(SPH)', type: 'text' },
+            { key: 'RCYL', label: '右眼散光(CYL)', type: 'text' },
+            { key: 'RAXIS', label: '右眼角度(AXIS)', type: 'text' },
+            { key: 'RADD', label: '右眼老花(ADD)', type: 'text' },
+            { key: 'RBCV', label: '右眼V', type: 'text' },
+            { key: 'RBCH', label: '右眼H', type: 'text' },
+            { key: 'LSPH', label: '左眼球面(SPH)', type: 'text' },
+            { key: 'LCYL', label: '左眼散光(CYL)', type: 'text' },
+            { key: 'LAXIS', label: '左眼角度(AXIS)', type: 'text' },
+            { key: 'LADD', label: '左眼老花(ADD)', type: 'text' },
+            { key: 'LBCV', label: '左眼V', type: 'text' },
+            { key: 'LBCH', label: '左眼H', type: 'text' },
+            { key: 'PD', label: '瞳距(PD)', type: 'text' },
+            { key: 'ITEM', label: 'ITEM', type: 'text' },
+            { key: 'RITEM', label: '隱形右眼', type: 'text' },
+            { key: 'LITEM', label: '隱形左眼', type: 'text' },
+            { key: 'RBRVISE1', label: '右眼矯正前', type: 'text' },
+            { key: 'LBRVISE1', label: '左眼矯正前', type: 'text' },
+            { key: 'RBRVISE2', label: '右眼矯正後', type: 'text' },
+            { key: 'LBRVISE2', label: '左眼矯正後', type: 'text' },
+            { key: 'REMARK', label: '備註一 (可使用 AI 建議)', type: 'text', className: 'col-span-3' },
+            { key: 'REMARK2', label: '備註二', type: 'text', className: 'col-span-3' },
+            { key: 'REMARK3', label: '備註三', type: 'text', className: 'col-span-3' },
+            { key: 'AGE', label: '年齡', type: 'number' },
+            { key: 'NUM', label: '筆數', type: 'number' },
+        ];
+
+        // --- UI Components ---
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+        );
+
+        const Modal = ({ title, onClose, children }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
+                        <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+                    </div>
+                    <div className="p-6">
+                        {children}
+                    </div>
+                </div>
+            </div>
+        );
+
+        const AiResultModal = ({ result, onClose }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg border border-purple-200">
+                    <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-4 rounded-t-xl flex justify-between items-center text-white">
+                        <h3 className="text-lg font-bold flex items-center"><Sparkles className="w-5 h-5 mr-2 text-yellow-300" /> {result.title}</h3>
+                        <button onClick={onClose} className="hover:text-gray-200 text-2xl">&times;</button>
+                    </div>
+                    <div className="p-6">
+                        <div className="bg-gray-50 p-4 rounded border border-gray-100 text-gray-700 leading-relaxed whitespace-pre-wrap">{result.content}</div>
+                        <div className="mt-6 flex justify-end space-x-3">
+                             <button onClick={() => {navigator.clipboard.writeText(result.content); alert('已複製');}} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded">複製</button>
+                            {result.onApply && <button onClick={() => { result.onApply(result.content); onClose(); }} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded">填入備註</button>}
+                            <button onClick={onClose} className="px-4 py-2 border hover:bg-gray-50 rounded">關閉</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [isAdmin, setIsAdmin] = useState(false);
+            const [userRole, setUserRole] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [importStatus, setImportStatus] = useState('');
+            const [importProgress, setImportProgress] = useState(0);
+            const [activeTab, setActiveTab] = useState('search');
+            
+            const [customers, setCustomers] = useState([]);
+            const [allPrescriptions, setAllPrescriptions] = useState([]); 
+            const [filteredCustomers, setFilteredCustomers] = useState([]);
+            const [selectedCustomer, setSelectedCustomer] = useState(null);
+            const [customerPrescriptions, setCustomerPrescriptions] = useState([]);
+            
+            const [searchCriteria, setSearchCriteria] = useState({ CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: '' });
+            const [hasSearched, setHasSearched] = useState(false);
+
+            const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+            const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
+            const [editingData, setEditingData] = useState({});
+            const [mode, setMode] = useState('add');
+
+            const [aiResult, setAiResult] = useState(null);
+            const [isAiLoading, setIsAiLoading] = useState(false);
+            const [systemUsers, setSystemUsers] = useState([]);
+            const [msg, setMsg] = useState({ text: '', type: '' });
+            const [authError, setAuthError] = useState(null);
+
+            // --- Authentication & Initialization (Firebase Auth + Firestore for Perms) ---
+            useEffect(() => {
+                const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                        const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
+
+                        try {
+                            const snapshot = await getDocs(adminRef);
+                            const allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                            const myUser = allUsers.find(u => u.email === currentUser.email);
+                            
+                            let currentRole = 'pending'; 
+
+                            if (PREDEFINED_ADMINS.includes(currentUser.email)) {
+                                currentRole = 'admin';
+                            } else if (myUser) {
+                                currentRole = myUser.role || 'pending'; 
+                            }
+
+                            if (!myUser) {
+                                await addDoc(adminRef, {
+                                    email: currentUser.email,
+                                    role: currentRole,
+                                    addedAt: new Date().toISOString()
+                                });
+                            } else if (PREDEFINED_ADMINS.includes(currentUser.email) && myUser.role !== 'admin') {
+                                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' });
+                            }
+
+                            setUserRole(currentRole);
+                            setIsAdmin(currentRole === 'admin');
+
+                        } catch (err) {
+                            console.error("Error checking admin status:", err);
+                        }
+                    } else {
+                        setIsAdmin(false);
+                        setUserRole(null);
+                        setCustomers([]);
+                        setAllPrescriptions([]);
+                        setSelectedCustomer(null);
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // --- Fetch Data (GAS) ---
+            const fetchData = async () => {
+                if (!GAS_API_URL) return;
+                setLoading(true);
+                try {
+                    const [cData, pData] = await Promise.all([
+                        apiService.read('CMF'),
+                        apiService.read('PRXMF')
+                    ]);
+                    setCustomers(cData || []);
+                    setAllPrescriptions(pData || []);
+                } catch (e) {
+                    console.error(e);
+                    showMsg("資料讀取失敗", "error");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                if (user && userRole !== 'pending') fetchData();
+            }, [user, userRole]);
+
+            useEffect(() => {
+                if (selectedCustomer && allPrescriptions.length > 0) {
+                    const matches = allPrescriptions.filter(p => String(p.CID1).trim() === String(selectedCustomer.CID1).trim());
+                    matches.sort((a, b) => new Date(b.DATE) - new Date(a.DATE));
+                    setCustomerPrescriptions(matches);
+                } else {
+                    setCustomerPrescriptions([]);
+                }
+            }, [selectedCustomer, allPrescriptions]);
+
+            // --- Handlers (Firebase Auth) ---
+            const handleGoogleLogin = async () => {
+                setAuthError(null);
+                const provider = new GoogleAuthProvider();
+                try {
+                    await signInWithPopup(auth, provider);
+                } catch (error) {
+                    if (error.code === 'auth/unauthorized-domain') {
+                        let domain = window.location.hostname;
+                        if(window.location.protocol === 'blob:') {
+                             try { domain = new URL(window.location.href.replace('blob:', '')).hostname; } catch(e) { domain = "無法解析"; }
+                        }
+                        setAuthError({ type: 'domain', domain, fullUrl: window.location.href });
+                    } else {
+                        setAuthError({ type: 'other', message: error.message });
+                    }
+                }
+            };
+
+            const handleLogout = () => signOut(auth);
+
+            const handleSearch = () => {
+                const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
+                const lowerName = NAME.toLowerCase();
+                const lowerAddr = ADDRESS.toLowerCase();
+                const filtered = customers.filter(c => {
+                    const matchCID = CID1 ? String(c.CID1).includes(CID1) : true;
+                    const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(lowerName) : true;
+                    const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
+                    const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(lowerAddr) : true;
+                    const matchBirth = BIRDATE ? c.BIRDATE === BIRDATE : true;
+                    return matchCID && matchName && matchTel && matchAddr && matchBirth;
+                });
+                setFilteredCustomers(filtered);
+                setHasSearched(true);
+            };
+
+            const getPrxCount = (cid1) => allPrescriptions.filter(p => String(p.CID1).trim() === String(cid1).trim()).length;
+
+            const handleGenerateCareMessage = async (customer) => {
+                setIsAiLoading(true);
+                const prompt = `為客戶 ${customer.NAME} (上次光臨: ${customer.LASTD || '未知'}) 寫一則眼鏡行關懷簡訊(80字內)，包含問候、提醒保養、新款通知。`;
+                const result = await callGeminiAPI(prompt);
+                setAiResult({ title: `AI 關懷簡訊 (${customer.NAME})`, content: result });
+                setIsAiLoading(false);
+            };
+
+            const handleAnalyzeVision = async () => {
+                const d = editingData;
+                if (!d.RSPH && !d.LSPH && !d.AGE) { alert("請輸入驗光數據"); return; }
+                setIsAiLoading(true);
+                const prompt = `分析驗光數據(80字內): 年齡${d.AGE}, R:${d.RSPH}/${d.RCYL}, L:${d.LSPH}/${d.LSPH}, ADD:${d.RADD}。給予鏡片建議與保養叮嚀。`;
+                const result = await callGeminiAPI(prompt);
+                setAiResult({ title: 'AI 視力分析', content: result, onApply: (t) => setEditingData(p => ({...p, REMARK: t})) });
+                setIsAiLoading(false);
+            };
+
+            // CRUD Wrappers (GAS)
+            const openCustomerModal = (c) => { setMode(c ? 'edit' : 'add'); setEditingData(c ? {...c} : {CID1:'', NAME:'', SEX:'男', INDATE: new Date().toISOString().split('T')[0]}); setIsCustomerModalOpen(true); };
+            const saveCustomer = async () => {
+                if(!isAdmin) return;
+                setLoading(true);
+                try {
+                    if (mode === 'add') {
+                        if (customers.some(c => c.CID1 === editingData.CID1)) { alert('編號重複'); setLoading(false); return; }
+                        await apiService.create('CMF', editingData);
+                    } else await apiService.update('CMF', editingData.id, editingData);
+                    setIsCustomerModalOpen(false); showMsg('儲存成功', 'success'); fetchData();
+                } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
+            };
+            const deleteCustomer = async (id) => {
+                if(!isAdmin || !confirm('確定刪除?')) return;
+                setLoading(true);
+                try { await apiService.delete('CMF', id); showMsg('刪除成功', 'success'); fetchData(); } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
+            };
+            const openPrxModal = (p) => { setMode(p ? 'edit' : 'add'); setEditingData(p ? {...p} : {CID1: selectedCustomer.CID1, NAME: selectedCustomer.NAME, TEL: selectedCustomer.TEL, DATE: new Date().toISOString().split('T')[0]}); setIsPrxModalOpen(true); };
+            const savePrx = async () => {
+                if(!isAdmin) return;
+                setLoading(true);
+                try {
+                    if (mode === 'add') await apiService.create('PRXMF', editingData);
+                    else await apiService.update('PRXMF', editingData.id, editingData);
+                    setIsPrxModalOpen(false); showMsg('儲存成功', 'success'); fetchData();
+                } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
+            };
+            const deletePrx = async (id) => {
+                if(!isAdmin || !confirm('確定刪除?')) return;
+                setLoading(true);
+                try { await apiService.delete('PRXMF', id); showMsg('刪除成功', 'success'); fetchData(); } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
+            };
+
+            // Admin (Firestore)
+            const fetchSystemUsers = async () => {
+                if(!isAdmin) return;
+                setLoading(true);
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                const snap = await getDocs(q);
+                setSystemUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setLoading(false);
+            };
+            const addUser = async (email) => {
+                if (!email) return;
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sys_users'), {email, role:'user', addedAt: new Date().toISOString()});
+                fetchSystemUsers();
+            };
+            const removeUser = async (id) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id));
+                fetchSystemUsers();
+            };
+            const updateUserRole = async (id, role) => {
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {role});
+                showMsg('已更新', 'success'); fetchSystemUsers();
+            };
+
+            // CSV
+            const exportCSV = (type) => {
+                const data = type === 'CMF' ? customers : allPrescriptions;
+                if (!data.length) { alert('無資料'); return; }
+                const sorted = [...data].sort((a, b) => String(a.CID1||'').localeCompare(String(b.CID1||''), undefined, {numeric: true}));
+                const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key);
+                if (type === 'PRXMF') headers.unshift('CID1', 'NAME');
+                const content = [headers.join(','), ...sorted.map(row => headers.map(f => `"${String(row[f]||'').replace(/"/g,'""')}"`).join(','))].join('\n');
+                const url = URL.createObjectURL(new Blob(["\uFEFF"+content], {type:'text/csv;charset=utf-8'}));
+                const link = document.createElement("a"); link.href = url; link.download = `${type}_export.csv`; link.click();
+            };
+
+            const handleImportCSV = (e, type) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setLoading(true); setImportStatus('準備中...'); setImportProgress(0);
+
+                Papa.parse(file, {
+                    header: true, skipEmptyLines: 'greedy',
+                    complete: async (results) => {
+                        const rows = results.data;
+                        if (!rows.length) { setLoading(false); alert('無資料'); return; }
+                        
+                        const BATCH_SIZE = 200; 
+                        let count = 0;
+                        const total = rows.length;
+
+                        for (let i = 0; i < total; i += BATCH_SIZE) {
+                            const chunk = rows.slice(i, i + BATCH_SIZE);
+                            try {
+                                await apiService.createBatch(type, chunk);
+                                count += chunk.length;
+                                setImportProgress(Math.round((count / total) * 100));
+                                setImportStatus(`已匯入 ${count} / ${total} 筆...`);
+                                await new Promise(r => requestAnimationFrame(r));
+                            } catch (err) {
+                                console.error(err);
+                                alert(`批次匯入失敗: ${err}`);
+                                break;
+                            }
+                        }
+                        setLoading(false);
+                        alert(`匯入完成！成功匯入 ${count} 筆。`);
+                        e.target.value = '';
+                        if (type === 'CMF') fetchData();
+                    }
+                });
+            };
+
+            const showMsg = (text, type) => { setMsg({ text, type }); setTimeout(() => setMsg({ text: '', type: '' }), 3000); };
+
+            if (!user) return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
+                    {/* Error Modal for Auth */}
+                    {authError && authError.type === 'domain' && (
+                        <div className="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[80] p-4">
+                            <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+                                <h3 className="text-xl font-bold text-red-600 mb-4 flex items-center">⚠️ 網域授權錯誤</h3>
+                                <div className="bg-gray-100 p-3 rounded text-lg font-mono border-2 border-blue-200 text-blue-800 select-all break-all mb-4">{authError.domain}</div>
+                                <div className="flex justify-end space-x-3">
+                                    <button onClick={() => {navigator.clipboard.writeText(authError.domain); alert('已複製');}} className="px-4 py-2 bg-blue-100 text-blue-700 rounded">複製網域</button>
+                                    <button onClick={() => setAuthError(null)} className="px-4 py-2 bg-gray-600 text-white rounded">關閉視窗</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="bg-white p-8 rounded shadow-lg max-w-md w-full">
+                        <h1 className="text-2xl font-bold mb-4 text-center">鐘錶眼鏡客戶管理系統 (混合版)</h1>
+                        <button onClick={handleGoogleLogin} className="w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 rounded flex items-center justify-center hover:bg-gray-50 transition shadow-sm">
+                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 mr-2" /> 使用 Google 帳號登入
+                        </button>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen flex flex-col relative">
+                    {loading && (
+                        <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
+                             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+                             <p className="text-lg font-bold">{importStatus || (isAiLoading ? 'AI 思考中...' : '處理中...')}</p>
+                             {importProgress > 0 && <div className="w-64 bg-gray-200 rounded-full h-2.5 mt-2"><div className="bg-blue-600 h-2.5 rounded-full transition-all" style={{width: `${importProgress}%`}}></div></div>}
+                        </div>
+                    )}
+                    {aiResult && <AiResultModal result={aiResult} onClose={() => setAiResult(null)} />}
+                    
+                    <header className="bg-blue-800 text-white p-4 shadow flex justify-between items-center">
+                        <div className="text-xl font-bold flex items-center cursor-pointer" onClick={() => {setSelectedCustomer(null); setActiveTab('search');}}><Eye className="mr-2"/> 客戶管理系統</div>
+                        <div className="flex items-center gap-4 text-sm">
+                            <span>{user.email} <span className="bg-yellow-500 text-blue-900 px-1 rounded ml-1">{userRole === 'admin' ? '管理員' : userRole === 'pending' ? '未授權' : '使用者'}</span></span>
+                            <button onClick={handleLogout}><LogOut/></button>
+                        </div>
+                    </header>
+
+                    <nav className="bg-white shadow border-b flex">
+                        <button className={`px-6 py-3 border-b-2 ${activeTab==='search'?'border-blue-600 text-blue-600':''}`} onClick={() => {setSelectedCustomer(null); setActiveTab('search');}}>客戶查詢</button>
+                        {selectedCustomer && <button className="px-6 py-3 border-b-2 border-blue-600 text-blue-600">{selectedCustomer.NAME}</button>}
+                        {isAdmin && <button className={`px-6 py-3 border-b-2 ${activeTab==='admin'?'border-blue-600 text-blue-600':''}`} onClick={() => {setSelectedCustomer(null); setActiveTab('admin'); fetchSystemUsers();}}>系統管理</button>}
+                    </nav>
+
+                    {msg.text && <div className={`fixed top-4 right-4 p-4 rounded shadow text-white z-50 ${msg.type==='success'?'bg-green-500':'bg-red-500'}`}>{msg.text}</div>}
+
+                    <main className="flex-1 container mx-auto p-4 overflow-y-auto">
+                        {userRole === 'pending' ? (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                <Lock className="w-16 h-16 mb-4"/>
+                                <h2 className="text-2xl font-bold">帳號審核中</h2>
+                                <p>請聯繫管理員開通權限。</p>
+                            </div>
+                        ) : activeTab === 'search' && !selectedCustomer ? (
+                            <div className="space-y-6">
+                                <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
+                                    <input placeholder="客戶編號" className="border p-2 rounded" value={searchCriteria.CID1} onChange={e=>setSearchCriteria({...searchCriteria, CID1:e.target.value})} />
+                                    <input placeholder="姓名" className="border p-2 rounded" value={searchCriteria.NAME} onChange={e=>setSearchCriteria({...searchCriteria, NAME:e.target.value})} />
+                                    <input placeholder="電話" className="border p-2 rounded" value={searchCriteria.TEL} onChange={e=>setSearchCriteria({...searchCriteria, TEL:e.target.value})} />
+                                    <input placeholder="地址" className="border p-2 rounded" value={searchCriteria.ADDRESS} onChange={e=>setSearchCriteria({...searchCriteria, ADDRESS:e.target.value})} />
+                                    <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e=>setSearchCriteria({...searchCriteria, BIRDATE:e.target.value})} />
+                                    <button onClick={handleSearch} className="bg-blue-600 text-white p-2 rounded flex justify-center items-center"><Search className="mr-1"/> 搜尋</button>
+                                </div>
+                                {hasSearched && (
+                                    <div className="bg-white p-4 rounded shadow">
+                                        <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length})</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                        <table className="w-full">
+                                            <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
+                                            <tbody>
+                                                {filteredCustomers.map(c => (
+                                                    <tr key={c.id} className="border-t hover:bg-gray-50">
+                                                        <td className="p-2">{c.CID1}</td>
+                                                        <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{c.NAME}</td>
+                                                        <td className="p-2 text-center">{c.SEX}</td><td className="p-2">{c.TEL}</td><td className="p-2">{c.BIRDATE}</td>
+                                                        <td className="p-2 text-center font-bold">{getPrxCount(c.CID1)}</td>
+                                                        <td className="p-2 flex gap-2">
+                                                            {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        ) : selectedCustomer ? (
+                            <div className="space-y-6">
+                                <div className="bg-white p-6 rounded shadow border-l-4 border-blue-600">
+                                    <div className="flex justify-between mb-4">
+                                        <h2 className="text-2xl font-bold">{selectedCustomer.NAME} ({selectedCustomer.CID1})</h2>
+                                        <div className="flex gap-2">
+                                            <button onClick={()=>handleGenerateCareMessage(selectedCustomer)} className="bg-purple-100 text-purple-700 px-3 py-1 rounded flex items-center"><Sparkles className="w-4 mr-1"/> AI 簡訊</button>
+                                            {isAdmin && <button onClick={()=>openCustomerModal(selectedCustomer)} className="text-blue-600 bg-gray-100 p-2 rounded"><Edit/></button>}
+                                        </div>
+                                    </div>
+                                    <div className="grid md:grid-cols-3 gap-4 text-sm">
+                                        <div>電話: {selectedCustomer.TEL}</div><div>生日: {selectedCustomer.BIRDATE}</div><div>性別: {selectedCustomer.SEX}</div>
+                                        <div className="col-span-3">地址: {selectedCustomer.ADDRESS}</div>
+                                        <div>初訪: {selectedCustomer.INDATE}</div><div>最後: {selectedCustomer.LASTD}</div><div>總計: {selectedCustomer.SUM}</div>
+                                        <div className="col-span-3 bg-gray-50 p-2">備考: {selectedCustomer.CLASS} {selectedCustomer.CLASS1}</div>
+                                    </div>
+                                </div>
+                                <div className="bg-white p-4 rounded shadow">
+                                    <div className="flex justify-between mb-4 border-b pb-2"><h3 className="font-bold flex items-center"><Database className="mr-2"/> 驗光紀錄</h3>{isAdmin && <button onClick={()=>openPrxModal()} className="bg-green-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                    <div className="space-y-4">
+                                        {customerPrescriptions.map(p => (
+                                            <div key={p.id} className="border rounded p-3">
+                                                <div className="flex justify-between font-bold mb-2">
+                                                    <span className="text-blue-800">{p.DATE}</span>
+                                                    {isAdmin && <div className="flex gap-2"><button onClick={()=>openPrxModal(p)} className="text-blue-600"><Edit/></button><button onClick={()=>deletePrx(p.id)} className="text-red-600"><Trash2/></button></div>}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                                    <div className="bg-red-50 p-2">R: {p.RSPH}/{p.RCYL} x {p.RAXIS} ADD:{p.RADD}</div>
+                                                    <div className="bg-blue-50 p-2">L: {p.LSPH}/{p.LCYL} x {p.LAXIS} ADD:{p.LADD}</div>
+                                                </div>
+                                                <div className="text-xs text-gray-500 mt-2">PD:{p.PD} | 備註: {p.REMARK}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : activeTab === 'admin' && (
+                            <div className="space-y-6">
+                                <div className="bg-white p-6 rounded shadow grid md:grid-cols-2 gap-6">
+                                    <div className="border p-4">
+                                        <h3 className="font-bold mb-2 text-blue-600">客戶資料 (CMF)</h3>
+                                        <button onClick={()=>exportCSV('CMF')} className="w-full bg-gray-100 py-2 mb-2 rounded">匯出 CSV</button>
+                                        <label className="block w-full bg-blue-600 text-white py-2 rounded text-center cursor-pointer">匯入 CSV<input type="file" className="hidden" onChange={e=>handleImportCSV(e,'CMF')}/></label>
+                                    </div>
+                                    <div className="border p-4">
+                                        <h3 className="font-bold mb-2 text-green-600">驗光資料 (PRXMF)</h3>
+                                        <button onClick={()=>exportCSV('PRXMF')} className="w-full bg-gray-100 py-2 mb-2 rounded">匯出 CSV</button>
+                                        <label className="block w-full bg-green-600 text-white py-2 rounded text-center cursor-pointer">匯入 CSV<input type="file" className="hidden" onChange={e=>handleImportCSV(e,'PRXMF')}/></label>
+                                    </div>
+                                </div>
+                                <div className="bg-white p-6 rounded shadow">
+                                    <h2 className="font-bold mb-4">使用者管理</h2>
+                                    <div className="flex gap-2 mb-4"><input id="u_email" placeholder="Email" className="border p-2 flex-1 rounded"/><button onClick={()=>{addUser(document.getElementById('u_email').value)}} className="bg-blue-600 text-white px-4 rounded">新增</button></div>
+                                    <div className="space-y-2">
+                                        {systemUsers.map(u => (
+                                            <div key={u.id} className="flex justify-between items-center border-b pb-2">
+                                                <span>{u.email} <span className="text-xs bg-gray-200 px-1 rounded">{u.role}</span></span>
+                                                <div className="flex gap-2">
+                                                    <select value={u.role} onChange={e=>updateUserRole(u.id, e.target.value)} className="border rounded"><option value="pending">未授權</option><option value="user">使用者</option><option value="admin">管理員</option></select>
+                                                    <button onClick={()=>removeUser(u.id)} className="text-red-600">刪除</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Modals for CMF/PRXMF Forms omitted for brevity but logic is in App component above */}
+                    {(isCustomerModalOpen || isPrxModalOpen) && (
+                        <Modal title={isCustomerModalOpen ? (mode==='add'?"新增客戶":"編輯客戶") : (mode==='add'?"新增驗光":"編輯驗光")} onClose={()=>{setIsCustomerModalOpen(false);setIsPrxModalOpen(false);}}>
+                            <form onSubmit={e => { e.preventDefault(); isCustomerModalOpen ? saveCustomer() : savePrx(); }} className="grid grid-cols-2 gap-4">
+                                {(isCustomerModalOpen ? CMF_FIELDS : PRXMF_FIELDS).map(f => (
+                                    <div key={f.key} className={f.className}>
+                                        <label className="block text-sm font-bold text-gray-500">{f.label}</label>
+                                        {f.type==='select' ? <select className="border w-full p-1 rounded" value={editingData[f.key]||'男'} onChange={e=>setEditingData({...editingData,[f.key]:e.target.value})}>{f.options.map(o=><option key={o} value={o}>{o}</option>)}</select> : <input type={f.type} className="border w-full p-1 rounded" value={editingData[f.key]||''} onChange={e=>setEditingData({...editingData,[f.key]:e.target.value})} />}
+                                    </div>
+                                ))}
+                                {!isCustomerModalOpen && <div className="col-span-2 flex justify-between pt-4 border-t mt-2"><button type="button" onClick={handleAnalyzeVision} className="text-purple-600 flex items-center"><Sparkles className="w-4 mr-1"/> AI 建議</button><div className="flex gap-2"><button type="button" onClick={()=>{setIsPrxModalOpen(false)}} className="border px-3 py-1 rounded">取消</button><button type="submit" className="bg-blue-600 text-white px-3 py-1 rounded">儲存</button></div></div>}
+                                {isCustomerModalOpen && <div className="col-span-2 flex justify-end gap-2 mt-4"><button type="button" onClick={()=>{setIsCustomerModalOpen(false)}} className="border px-3 py-1 rounded">取消</button><button type="submit" className="bg-blue-600 text-white px-3 py-1 rounded">儲存</button></div>}
+                            </form>
+                        </Modal>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
