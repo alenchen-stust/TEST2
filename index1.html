@@ -80,9 +80,14 @@
         // --- API Services (Google Sheets) ---
         const apiService = {
             read: async (sheet) => {
-                const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
-                const json = await res.json();
-                return json.status === 'success' && Array.isArray(json.data) ? json.data : [];
+                try {
+                    const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
+                    const json = await res.json();
+                    return json.status === 'success' && Array.isArray(json.data) ? json.data : [];
+                } catch (e) {
+                    console.error(`API Read Error (${sheet}):`, e);
+                    return [];
+                }
             },
             create: async (sheet, data) => {
                 const res = await fetch(GAS_API_URL, {
@@ -227,10 +232,12 @@
             // *** Optimization: Memoize Prescription Counts ***
             const prxCounts = useMemo(() => {
                 const counts = {};
-                allPrescriptions.forEach(p => {
-                    const id = String(p.CID1 || '').trim();
-                    if(id) counts[id] = (counts[id] || 0) + 1;
-                });
+                if(Array.isArray(allPrescriptions)) {
+                    allPrescriptions.forEach(p => {
+                        const id = String(p.CID1 || '').trim();
+                        if(id) counts[id] = (counts[id] || 0) + 1;
+                    });
+                }
                 return counts;
             }, [allPrescriptions]);
 
@@ -239,43 +246,25 @@
                 const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
-                        // Use Firestore for permissions
                         const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
                         const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
-                        
                         try {
                             const snapshot = await getDocs(adminRef);
                             const allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                             const myUser = allUsers.find(u => u.email === currentUser.email);
-                            
                             let currentRole = 'pending'; 
                             if (PREDEFINED_ADMINS.includes(currentUser.email)) currentRole = 'admin';
                             else if (myUser) currentRole = myUser.role || 'pending'; 
 
-                            // Critical: Ensure predefined admins are restored even if DB wiped
                             if (!myUser) {
-                                try {
-                                    await addDoc(adminRef, { email: currentUser.email, role: currentRole, addedAt: new Date().toISOString() });
-                                } catch(e) {
-                                    console.error("Failed to auto-register user (check rules):", e);
-                                    // Even if write fails, grant local admin for predefined
-                                    if(PREDEFINED_ADMINS.includes(currentUser.email)) currentRole = 'admin';
-                                }
+                                try { await addDoc(adminRef, { email: currentUser.email, role: currentRole, addedAt: new Date().toISOString() }); } catch(e) { if(PREDEFINED_ADMINS.includes(currentUser.email)) currentRole = 'admin'; }
                             } else if (PREDEFINED_ADMINS.includes(currentUser.email) && myUser.role !== 'admin') {
-                                try {
-                                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' });
-                                } catch(e) { console.error("Failed to update admin role:", e); }
+                                try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' }); } catch(e) {}
                             }
-
                             setUserRole(currentRole);
                             setIsAdmin(currentRole === 'admin');
                         } catch (err) { 
-                            console.error("Auth Error", err);
-                            // Fallback for predefined admins if DB read fails completely
-                            if(PREDEFINED_ADMINS.includes(currentUser.email)) {
-                                setUserRole('admin');
-                                setIsAdmin(true);
-                            }
+                            if(PREDEFINED_ADMINS.includes(currentUser.email)) { setUserRole('admin'); setIsAdmin(true); }
                         }
                     } else {
                         setIsAdmin(false); setUserRole(null); setCustomers([]); setAllPrescriptions([]); setSelectedCustomer(null);
@@ -291,6 +280,7 @@
                 setLoading(true);
                 try {
                     const [cData, pData] = await Promise.all([apiService.read('CMF'), apiService.read('PRXMF')]);
+                    console.log("Fetched Data Count:", cData?.length, pData?.length);
                     setCustomers(Array.isArray(cData) ? cData : []);
                     setAllPrescriptions(Array.isArray(pData) ? pData : []);
                 } catch (e) { showMsg("資料讀取失敗", "error"); } finally { setLoading(false); }
@@ -323,16 +313,25 @@
 
             const handleSearch = () => {
                 const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
+                const lowerName = (NAME || '').toLowerCase();
+                const lowerAddr = (ADDRESS || '').toLowerCase();
+
                 const filtered = customers.filter(c => {
                     if (!c) return false;
                     const matchCID = CID1 ? String(c.CID1 || '').includes(CID1) : true;
-                    const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(NAME.toLowerCase()) : true;
+                    const matchName = NAME ? String(c.NAME || '').toLowerCase().includes(lowerName) : true;
                     const matchTel = TEL ? String(c.TEL || '').includes(TEL) : true;
-                    const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(ADDRESS.toLowerCase()) : true;
+                    const matchAddr = ADDRESS ? String(c.ADDRESS || '').toLowerCase().includes(lowerAddr) : true;
                     const matchBirth = BIRDATE ? c.BIRDATE === BIRDATE : true;
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
-                setFilteredCustomers(filtered);
+                // ** LIMIT RESULTS TO PREVENT CRASH **
+                if (filtered.length > 100) {
+                   showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 100 筆，請增加搜尋條件。`, 'error');
+                   setFilteredCustomers(filtered.slice(0, 100));
+                } else {
+                   setFilteredCustomers(filtered);
+                }
                 setHasSearched(true);
             };
 
@@ -494,11 +493,12 @@
                                 {hasSearched && (
                                     <div className="bg-white p-4 rounded shadow fade-in">
                                         <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length})</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                        <div className="overflow-x-auto">
                                         <table className="w-full">
                                             <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
                                             <tbody>
-                                                {filteredCustomers.map(c => (
-                                                    <tr key={c.id} className="border-t hover:bg-gray-50">
+                                                {filteredCustomers.map((c, idx) => (
+                                                    <tr key={c.id || idx} className="border-t hover:bg-gray-50">
                                                         <td className="p-2">{c.CID1}</td>
                                                         <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{c.NAME}</td>
                                                         <td className="p-2 text-center">{c.SEX}</td><td className="p-2">{c.TEL}</td><td className="p-2">{c.BIRDATE}</td>
@@ -511,6 +511,7 @@
                                                 ))}
                                             </tbody>
                                         </table>
+                                        </div>
                                     </div>
                                 )}
                             </div>
