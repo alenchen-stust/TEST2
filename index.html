@@ -69,30 +69,41 @@
         };
 
         // --- Initialize Firebase ---
-        const { initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } = window.firebaseModules;
-        const { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, query, where, onSnapshot } = window.firebaseModules;
+        // Modules are loaded asynchronously, logic handled inside App
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-        // --- Error Boundary Component (防崩潰機制) ---
+        // --- Error Boundary Component ---
         class ErrorBoundary extends Component {
             constructor(props) {
                 super(props);
                 this.state = { hasError: false, error: null, errorInfo: null };
             }
-            static getDerivedStateFromError(error) { return { hasError: true, error }; }
-            componentDidCatch(error, errorInfo) { console.error("System Error:", error, errorInfo); this.setState({ errorInfo }); }
+
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+
+            componentDidCatch(error, errorInfo) {
+                console.error("Global Error Boundary Caught:", error, errorInfo);
+                this.setState({ errorInfo });
+            }
+
             render() {
                 if (this.state.hasError) {
                     return (
                         <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
                             <div className="bg-white p-8 rounded-lg shadow-xl max-w-2xl w-full border border-red-200">
-                                <h2 className="text-2xl font-bold text-red-600 mb-4">系統發生錯誤</h2>
-                                <p className="mb-4 text-gray-700">可能是資料量過大或格式錯誤。</p>
-                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">重新整理頁面</button>
+                                <h2 className="text-2xl font-bold text-red-600 mb-4 flex items-center">
+                                    系統發生錯誤 (System Error)
+                                </h2>
+                                <p className="mb-4 text-gray-700 font-bold">很抱歉，程式執行時遇到了問題。</p>
+                                <div className="bg-gray-100 p-4 rounded text-left overflow-auto max-h-64 text-xs font-mono text-red-800 mb-6 border border-gray-300">
+                                    <strong>Error:</strong> {this.state.error && this.state.error.toString()}
+                                    <br/><br/>
+                                    <strong>Component Stack:</strong> {this.state.errorInfo && this.state.errorInfo.componentStack}
+                                </div>
+                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">
+                                    重新整理頁面
+                                </button>
                             </div>
                         </div>
                     );
@@ -108,7 +119,6 @@
                     const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
                     const json = await res.json();
                     if (json.status === 'success' && Array.isArray(json.data)) {
-                        // 記憶體優化：只保留需要的欄位值，並轉為字串
                         return json.data.map(item => {
                             const cleanItem = {};
                             for (const key in item) {
@@ -199,7 +209,12 @@
             const [userRole, setUserRole] = useState(null);
             const [loading, setLoading] = useState(false);
             const [activeTab, setActiveTab] = useState('search');
+            const [isFirebaseReady, setIsFirebaseReady] = useState(false);
             
+            const [appAuth, setAppAuth] = useState(null); // Store auth instance
+            const [appDb, setAppDb] = useState(null); // Store db instance
+            const [appIdVal, setAppIdVal] = useState('default-app-id');
+
             const [customers, setCustomers] = useState([]);
             const [allPrescriptions, setAllPrescriptions] = useState([]); 
             const [filteredCustomers, setFilteredCustomers] = useState([]);
@@ -207,6 +222,7 @@
             const [customerPrescriptions, setCustomerPrescriptions] = useState([]);
             
             const [searchCriteria, setSearchCriteria] = useState({ CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: '' });
+            const [hasSearched, setHasSearched] = useState(false);
 
             const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
             const [isPrxModalOpen, setIsPrxModalOpen] = useState(false);
@@ -218,7 +234,33 @@
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
 
-            // Optimization: Memoize Prescription Counts
+            // Initialize Firebase
+            useEffect(() => {
+                const checkModules = setInterval(() => {
+                    if (window.firebaseModules) {
+                        clearInterval(checkModules);
+                        try {
+                            const fb = window.firebaseModules;
+                            // Avoid re-initialization
+                            let app;
+                            try { app = fb.initializeApp(firebaseConfig); } 
+                            catch(e) { /* ignore if already initialized */ }
+                            
+                            const authInstance = fb.getAuth();
+                            const dbInstance = fb.getFirestore();
+                            
+                            setAppAuth(authInstance);
+                            setAppDb(dbInstance);
+                            setIsFirebaseReady(true);
+                        } catch(e) {
+                            console.error("Firebase Init Error", e);
+                        }
+                    }
+                }, 100);
+                return () => clearInterval(checkModules);
+            }, []);
+
+            // Memoize Prescription Counts
             const prxCounts = useMemo(() => {
                 const counts = {};
                 if(Array.isArray(allPrescriptions)) {
@@ -232,12 +274,15 @@
                 return counts;
             }, [allPrescriptions]);
 
-            // Auth
+            // Auth Listener
             useEffect(() => {
-                const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+                if(!isFirebaseReady || !appAuth) return;
+                const { onAuthStateChanged, getDocs, addDoc, updateDoc, collection, doc } = window.firebaseModules;
+                
+                const unsubscribe = onAuthStateChanged(appAuth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
-                        const adminRef = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                        const adminRef = collection(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users');
                         const PREDEFINED_ADMINS = ['alenchen@stust.edu.tw', 'v1277.chen@gmail.com.tw'];
                         try {
                             const snapshot = await getDocs(adminRef);
@@ -248,9 +293,10 @@
                             else if (myUser) currentRole = myUser.role || 'pending'; 
 
                             if (!myUser) {
-                                try { await addDoc(adminRef, { email: currentUser.email, role: currentRole, addedAt: new Date().toISOString() }); } catch(e) { if(PREDEFINED_ADMINS.includes(currentUser.email)) currentRole = 'admin'; }
+                                try { await addDoc(adminRef, { email: currentUser.email, role: currentRole, addedAt: new Date().toISOString() }); } 
+                                catch(e) { if(PREDEFINED_ADMINS.includes(currentUser.email)) currentRole = 'admin'; }
                             } else if (PREDEFINED_ADMINS.includes(currentUser.email) && myUser.role !== 'admin') {
-                                try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' }); } catch(e) {}
+                                try { await updateDoc(doc(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users', myUser.id), { role: 'admin' }); } catch(e) {}
                             }
                             setUserRole(currentRole);
                             setIsAdmin(currentRole === 'admin');
@@ -263,9 +309,9 @@
                     setLoading(false);
                 });
                 return () => unsubscribe();
-            }, []);
+            }, [isFirebaseReady, appAuth, appDb]);
 
-            // Fetch
+            // Fetch Data
             const fetchData = async () => {
                 if (!GAS_API_URL) return;
                 setLoading(true);
@@ -274,10 +320,7 @@
                     const safeCData = Array.isArray(cData) ? cData : [];
                     setCustomers(safeCData);
                     setAllPrescriptions(Array.isArray(pData) ? pData : []);
-                    
-                    // Default View: Show first 20 customers to verify data load
                     setFilteredCustomers(safeCData.slice(0, 20));
-                    
                 } catch (e) { showMsg("資料讀取失敗", "error"); } finally { setLoading(false); }
             };
 
@@ -294,7 +337,8 @@
             // Handlers
             const handleGoogleLogin = async () => {
                 setAuthError(null);
-                try { await signInWithPopup(auth, new GoogleAuthProvider()); } 
+                const { signInWithPopup, GoogleAuthProvider } = window.firebaseModules;
+                try { await signInWithPopup(appAuth, new GoogleAuthProvider()); } 
                 catch (error) {
                     if (error.code === 'auth/unauthorized-domain') {
                         let domain = window.location.hostname;
@@ -303,7 +347,10 @@
                     } else setAuthError({ type: 'other', message: error.message });
                 }
             };
-            const handleLogout = () => signOut(auth);
+            const handleLogout = () => {
+                const { signOut } = window.firebaseModules;
+                signOut(appAuth);
+            };
 
             const handleSearch = () => {
                 if (!Array.isArray(customers)) { setFilteredCustomers([]); return; }
@@ -312,7 +359,6 @@
                 const lowerName = (NAME || '').toLowerCase();
                 const lowerAddr = (ADDRESS || '').toLowerCase();
 
-                // Filter
                 const filtered = customers.filter(c => {
                     if (!c) return false;
                     const matchCID = CID1 ? String(c.CID1 || '').includes(CID1) : true;
@@ -323,18 +369,14 @@
                     return matchCID && matchName && matchTel && matchAddr && matchBirth;
                 });
                 
-                // ** CRITICAL FIX: Limit Render Count to Prevent White Screen **
-                const LIMIT = 50;
-                if (filtered.length > LIMIT) {
-                    setFilteredCustomers(filtered.slice(0, LIMIT));
-                    // Only show alert if actually filtering (not default view)
-                    if (CID1 || NAME || TEL || ADDRESS || BIRDATE) {
-                        showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 ${LIMIT} 筆，請增加條件。`, 'error');
-                    }
+                // Safety limit
+                if (filtered.length > 100) {
+                    showMsg(`符合筆數過多 (${filtered.length}筆)，僅顯示前 100 筆。`, 'error');
+                    setFilteredCustomers(filtered.slice(0, 100));
                 } else {
                     setFilteredCustomers(filtered);
-                    if (filtered.length === 0) showMsg('無符合資料', 'error');
                 }
+                setHasSearched(true);
             };
 
             // CRUD
@@ -364,7 +406,7 @@
                     if(mode === 'add' && newCustomer) {
                         setSelectedCustomer(newCustomer);
                         setTimeout(() => openPrxModal(null, newCustomer), 500); 
-                    } else handleSearch(); // Refresh list
+                    } else if (hasSearched) handleSearch();
 
                 } catch(e) { showMsg('失敗', 'error'); } finally { setLoading(false); }
             };
@@ -410,14 +452,28 @@
             const fetchSystemUsers = async () => {
                 if(!isAdmin) return;
                 setLoading(true);
-                const q = collection(db, 'artifacts', appId, 'public', 'data', 'sys_users');
+                const { getDocs, collection } = window.firebaseModules;
+                const q = collection(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users');
                 const snap = await getDocs(q);
                 setSystemUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             };
-            const addUser = async (email) => { if (!email) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sys_users'), {email, role:'user', addedAt: new Date().toISOString()}); fetchSystemUsers(); };
-            const removeUser = async (id) => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id)); fetchSystemUsers(); };
-            const updateUserRole = async (id, role) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sys_users', id), {role}); showMsg('已更新', 'success'); fetchSystemUsers(); };
+            const addUser = async (email) => { 
+                if (!email) return; 
+                const { addDoc, collection } = window.firebaseModules;
+                await addDoc(collection(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users'), {email, role:'user', addedAt: new Date().toISOString()}); 
+                fetchSystemUsers(); 
+            };
+            const removeUser = async (id) => { 
+                const { deleteDoc, doc } = window.firebaseModules;
+                await deleteDoc(doc(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users', id)); 
+                fetchSystemUsers(); 
+            };
+            const updateUserRole = async (id, role) => { 
+                const { updateDoc, doc } = window.firebaseModules;
+                await updateDoc(doc(appDb, 'artifacts', appIdVal, 'public', 'data', 'sys_users', id), {role}); 
+                showMsg('已更新', 'success'); fetchSystemUsers(); 
+            };
 
             // CSV Export
             const exportCSV = (type) => {
@@ -433,6 +489,8 @@
             };
 
             const showMsg = (text, type) => { setMsg({ text, type }); setTimeout(() => setMsg({ text: '', type: '' }), 3000); };
+
+            if (!isFirebaseReady) return <div className="min-h-screen flex items-center justify-center"><LoadingSpinner/></div>;
 
             if (!user) return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-100 relative">
@@ -456,7 +514,6 @@
             );
 
             return (
-                <ErrorBoundary>
                 <div className="min-h-screen flex flex-col relative">
                     {loading && <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white"><LoadingSpinner/><p className="text-lg font-bold">處理中...</p></div>}
                     
@@ -489,7 +546,7 @@
                                     <input type="date" className="border p-2 rounded" value={searchCriteria.BIRDATE} onChange={e=>setSearchCriteria({...searchCriteria, BIRDATE:e.target.value})} />
                                     <button onClick={handleSearch} className="bg-blue-600 text-white p-2 rounded flex justify-center items-center"><Search className="mr-1"/> 搜尋</button>
                                 </div>
-                                {/* List always renders something if filteredCustomers has items (initially 20, filtered max 50) */}
+                                {/* Results Table */}
                                 <div className="bg-white p-4 rounded shadow fade-in">
                                     <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length} 筆)</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
                                     <div className="overflow-x-auto">
@@ -680,12 +737,15 @@
                         </Modal>
                     )}
                 </div>
-                </ErrorBoundary>
             );
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        );
     </script>
 </body>
 </html>
