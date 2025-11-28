@@ -57,7 +57,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         // --- Icons Definition ---
         const Icon = ({ children, className, ...props }) => (
@@ -671,12 +671,19 @@
                 const data = type === 'CMF' ? customers : allPrescriptions; 
                 if (data.length === 0) { alert('無資料可匯出'); return; }
                 
+                // Sort by CID1 numerically and case-insensitively
+                const sortedData = [...data].sort((a, b) => {
+                    const idA = String(a.CID1 || '').trim();
+                    const idB = String(b.CID1 || '').trim();
+                    return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+                });
+
                 const headers = type === 'CMF' ? CMF_FIELDS.map(f => f.key) : PRXMF_FIELDS.map(f => f.key);
                 if (type === 'PRXMF') headers.unshift('CID1', 'NAME');
 
                 const csvContent = [
                     headers.join(','),
-                    ...data.map(row => headers.map(fieldName => {
+                    ...sortedData.map(row => headers.map(fieldName => {
                         let val = row[fieldName] || '';
                         val = String(val).replace(/"/g, '""'); 
                         return `"${val}"`;
@@ -698,46 +705,40 @@
                 if (!file) return;
                 
                 setLoading(true);
-                setImportStatus('正在解析 CSV...');
+                setImportStatus('準備匯入...');
                 setImportProgress(0);
+
+                let processedRows = 0;
+                let totalRows = 0;
 
                 Papa.parse(file, {
                     header: true,
-                    skipEmptyLines: 'greedy', // Use greedy to skip whitespace lines
-                    complete: async (results) => {
+                    skipEmptyLines: 'greedy',
+                    // Use chunk to stream file processing
+                    chunk: async (results, parser) => {
+                        parser.pause(); // Pause parser to handle async operations
+                        
                         const rows = results.data;
-                        if (!rows || rows.length === 0) {
-                            setLoading(false);
-                            alert("CSV 檔案無效或無資料");
+                        if (rows.length === 0) {
+                            parser.resume();
                             return;
                         }
 
-                        // Pre-check headers
-                        const fileHeaders = results.meta.fields || [];
-                        const requiredKey = type === 'CMF' ? 'CID1' : 'CID1'; // Basic check
-                        if (!fileHeaders.includes(requiredKey)) {
-                            if (!confirm(`警告：CSV 欄位似乎不符合格式 (未找到 ${requiredKey})。\n\n偵測到的欄位：${fileHeaders.slice(0, 5).join(', ')}...\n\n是否仍要繼續？`)) {
-                                setLoading(false);
-                                return;
-                            }
-                        }
-
+                        // Initialize totalRows estimation (rough estimate based on file size if not available)
+                        // PapaParse meta doesn't give total rows in stream, so we use file size progress
+                        // But we want to count rows. We'll update status based on rows processed.
+                        
                         const colRef = collection(db, 'artifacts', appId, 'public', 'data', type);
-                        const BATCH_SIZE = 400; // Conservative batch size
-                        const totalRows = rows.length;
-                        let processedCount = 0;
-
-                        setImportStatus(`準備匯入 ${totalRows} 筆資料...`);
-
+                        const BATCH_SIZE = 400; // Safe batch size
+                        
                         try {
-                            // Process in chunks sequentially
-                            for (let i = 0; i < totalRows; i += BATCH_SIZE) {
+                            // Process current chunk in batches
+                            for (let i = 0; i < rows.length; i += BATCH_SIZE) {
                                 const batch = writeBatch(db);
-                                const chunk = rows.slice(i, i + BATCH_SIZE);
+                                const chunkBatch = rows.slice(i, i + BATCH_SIZE);
                                 let opsInBatch = 0;
                                 
-                                chunk.forEach(row => {
-                                    // Basic cleanup: remove keys with empty strings or undefined
+                                chunkBatch.forEach(row => {
                                     const cleanRow = {};
                                     Object.keys(row).forEach(key => {
                                         let val = row[key];
@@ -746,7 +747,6 @@
                                         }
                                     });
                                     
-                                    // Only add if row has data
                                     if (Object.keys(cleanRow).length > 0) {
                                         const newDocRef = doc(colRef);
                                         batch.set(newDocRef, cleanRow);
@@ -756,32 +756,34 @@
 
                                 if (opsInBatch > 0) {
                                     await batch.commit();
-                                    processedCount += opsInBatch; // Count actual writes
+                                    processedRows += opsInBatch;
                                 }
                                 
-                                // Update progress
-                                setImportProgress(Math.min(Math.round(((i + chunk.length) / totalRows) * 100), 100));
-                                setImportStatus(`正在寫入資料庫... (${processedCount} / ${totalRows})`);
+                                // Update progress based on file bytes cursor
+                                const percent = Math.round((results.meta.cursor / file.size) * 100);
+                                setImportProgress(percent);
+                                setImportStatus(`已處理 ${processedRows} 筆資料...`);
                                 
-                                // Delay to allow UI paint
-                                await new Promise(resolve => setTimeout(resolve, 100));
+                                // Force UI update
+                                await new Promise(r => requestAnimationFrame(r));
                             }
                             
-                            setLoading(false); // Close overlay first
-                            // Then show success (small delay to ensure overlay is gone)
-                            setTimeout(() => {
-                                alert(`匯入完成！\n成功匯入 ${processedCount} 筆資料。`);
-                                if (type === 'CMF' && hasSearched) handleSearch();
-                            }, 100);
-
+                            parser.resume(); // Continue to next chunk
                         } catch (err) {
-                            console.error(err);
+                            console.error("Batch write error in chunk", err);
+                            parser.abort();
                             setLoading(false);
-                            alert('匯入過程發生錯誤: ' + err.message);
-                        } finally {
-                            setImportProgress(0);
-                            e.target.value = ''; // Reset input
+                            alert('匯入中斷: ' + err.message);
                         }
+                    },
+                    complete: () => {
+                        setLoading(false);
+                        setImportProgress(100);
+                        setTimeout(() => {
+                            alert(`匯入完成！\n共成功匯入 ${processedRows} 筆資料。`);
+                            if (type === 'CMF' && hasSearched) handleSearch();
+                        }, 200);
+                        e.target.value = '';
                     },
                     error: (err) => {
                         console.error(err);
@@ -842,13 +844,14 @@
                         <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white">
                              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
                              <p className="text-lg font-semibold animate-pulse mb-2">
-                                {importProgress > 0 ? importStatus : isAiLoading ? '✨ AI 正在思考中...' : '處理中...'}
+                                {importStatus || (isAiLoading ? '✨ AI 正在思考中...' : '處理中...')}
                              </p>
                              {importProgress > 0 && (
-                                 <div className="w-64 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
-                                    <div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${importProgress}%`}}></div>
+                                 <div className="w-64 bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 overflow-hidden">
+                                    <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{width: `${importProgress}%`}}></div>
                                  </div>
                              )}
+                             {importProgress > 0 && <span className="text-sm mt-1">{importProgress}%</span>}
                         </div>
                     )}
 
