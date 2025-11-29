@@ -69,7 +69,7 @@
         };
 
         // --- Initialize Firebase ---
-        // Modules are loaded asynchronously, logic handled inside App
+        // Modules are loaded asynchronously
 
         // --- Error Boundary Component ---
         class ErrorBoundary extends Component {
@@ -77,33 +77,22 @@
                 super(props);
                 this.state = { hasError: false, error: null, errorInfo: null };
             }
-
-            static getDerivedStateFromError(error) {
-                return { hasError: true, error };
-            }
-
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
             componentDidCatch(error, errorInfo) {
                 console.error("Global Error Boundary Caught:", error, errorInfo);
                 this.setState({ errorInfo });
             }
-
             render() {
                 if (this.state.hasError) {
                     return (
                         <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
                             <div className="bg-white p-8 rounded-lg shadow-xl max-w-2xl w-full border border-red-200">
-                                <h2 className="text-2xl font-bold text-red-600 mb-4 flex items-center">
-                                    系統發生錯誤 (System Error)
-                                </h2>
-                                <p className="mb-4 text-gray-700 font-bold">很抱歉，程式執行時遇到了問題。</p>
-                                <div className="bg-gray-100 p-4 rounded text-left overflow-auto max-h-64 text-xs font-mono text-red-800 mb-6 border border-gray-300">
+                                <h2 className="text-2xl font-bold text-red-600 mb-4">系統發生錯誤 (System Error)</h2>
+                                <p className="mb-4 text-gray-700">很抱歉，程式執行時遇到了問題。</p>
+                                <div className="bg-gray-100 p-4 rounded text-left overflow-auto max-h-64 text-xs font-mono text-red-800 mb-6">
                                     <strong>Error:</strong> {this.state.error && this.state.error.toString()}
-                                    <br/><br/>
-                                    <strong>Component Stack:</strong> {this.state.errorInfo && this.state.errorInfo.componentStack}
                                 </div>
-                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">
-                                    重新整理頁面
-                                </button>
+                                <button onClick={() => window.location.reload()} className="w-full bg-blue-600 text-white px-4 py-3 rounded hover:bg-blue-700 font-bold transition">重新整理頁面</button>
                             </div>
                         </div>
                     );
@@ -112,7 +101,7 @@
             }
         }
 
-        // --- API Services (Google Sheets) ---
+        // --- API Services ---
         const apiService = {
             read: async (sheet) => {
                 try {
@@ -268,8 +257,7 @@
             const [addrCity, setAddrCity] = useState('臺南市'); 
             const [addrDist, setAddrDist] = useState('');
             const [addrRoad, setAddrRoad] = useState('');
-            const [addrDetail, setAddrDetail] = useState('');
-
+            
             const [systemUsers, setSystemUsers] = useState([]);
             const [msg, setMsg] = useState({ text: '', type: '' });
             const [authError, setAuthError] = useState(null);
@@ -356,10 +344,8 @@
                 setLoading(true);
                 try {
                     const [cData, pData] = await Promise.all([apiService.read('CMF'), apiService.read('PRXMF')]);
-                    const safeCData = Array.isArray(cData) ? cData : [];
-                    setCustomers(safeCData);
+                    setCustomers(Array.isArray(cData) ? cData : []);
                     setAllPrescriptions(Array.isArray(pData) ? pData : []);
-                    setFilteredCustomers(safeCData.slice(0, 20));
                 } catch (e) { showMsg("資料讀取失敗", "error"); } finally { setLoading(false); }
             };
 
@@ -423,12 +409,12 @@
                 setMode(c ? 'edit' : 'add'); 
                 setEditingData(c ? {...c} : {CID1:'', NAME:'', SEX:'男', INDATE: new Date().toISOString().split('T')[0], ADDRESS: ''}); 
                 
-                // Initialize address fields for new or edit
+                // Address helper initialization
                 setAddrCity('臺南市'); 
                 setAddrDist(''); 
                 setAddrRoad(''); 
-                // If editing, put existing address in detail to preserve data, user can edit if needed.
-                setAddrDetail(c ? (c.ADDRESS || '') : '');
+                // We do NOT parse existing address back to parts because it's unreliable.
+                // Users edit the full string in the main input.
                 
                 setIsCustomerModalOpen(true); 
             };
@@ -436,18 +422,8 @@
             const saveCustomer = async () => {
                 if(!isAdmin) return;
                 setLoading(true);
-                
-                // Combine address
-                const finalAddr = (addrCity + addrDist + addrRoad + addrDetail).trim();
-                // If user didn't touch dropdowns and detail has value (edit mode), use detail.
-                // Actually, logic: if mode is add, use combination. If edit, check if dropdowns used.
-                // Simple approach: Concatenate non-empty parts.
-                // If detail already contains full address (from edit init), and user selects city, it might duplicate.
-                // Better: If editing, and user didn't change city/dist/road, keep detail.
-                // But detail was init with full address.
-                // Let's just save the combination. If user edits, they should clear detail if they use dropdowns?
-                // Or simply: Detail is the full address input for legacy data, dropdowns for new data helper.
-                const dataToSave = { ...editingData, ADDRESS: finalAddr || editingData.ADDRESS };
+                // dataToSave uses editingData.ADDRESS which is updated by inputs
+                const dataToSave = { ...editingData };
 
                 try {
                     let newCustomer = null;
@@ -548,6 +524,15 @@
 
             const showMsg = (text, type) => { setMsg({ text, type }); setTimeout(() => setMsg({ text: '', type: '' }), 3000); };
 
+            // Address Helper Function
+            const appendAddressPart = (partValue) => {
+                if (!partValue) return;
+                setEditingData(prev => ({
+                    ...prev,
+                    ADDRESS: (prev.ADDRESS || '') + partValue
+                }));
+            };
+
             if (!isFirebaseReady) return <div className="min-h-screen flex items-center justify-center"><LoadingSpinner/></div>;
 
             if (!user) return (
@@ -606,33 +591,35 @@
                                     <button onClick={handleSearch} className="bg-blue-600 text-white p-2 rounded flex justify-center items-center"><Search className="mr-1"/> 搜尋</button>
                                 </div>
                                 {/* Results Table */}
-                                <div className="bg-white p-4 rounded shadow fade-in">
-                                    <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length} 筆)</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
-                                    <div className="overflow-x-auto">
-                                    <table className="w-full">
-                                        <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
-                                        <tbody>
-                                            {filteredCustomers.map((c, idx) => (
-                                                <tr key={c.id || idx} className="border-t hover:bg-gray-50">
-                                                    <td className="p-2">{String(c.CID1 || '')}</td>
-                                                    <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{String(c.NAME || '')}</td>
-                                                    <td className="p-2 text-center">{String(c.SEX || '')}</td>
-                                                    <td className="p-2">{String(c.TEL || '')}</td>
-                                                    <td className="p-2">{String(c.BIRDATE || '')}</td>
-                                                    <td className="p-2 text-center font-bold">{prxCounts[String(c.CID1||'').trim()] || 0}</td>
-                                                    <td className="p-2 flex gap-2">
-                                                        <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
-                                                        {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {filteredCustomers.length === 0 && (
-                                                <tr><td colSpan="7" className="text-center py-8 text-gray-400">尚無資料或無符合條件</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                                {hasSearched && (
+                                    <div className="bg-white p-4 rounded shadow fade-in">
+                                        <div className="flex justify-between mb-4"><h2 className="font-bold">結果 ({filteredCustomers.length} 筆)</h2>{isAdmin && <button onClick={()=>openCustomerModal()} className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"><Plus className="w-4 mr-1"/> 新增</button>}</div>
+                                        <div className="overflow-x-auto">
+                                        <table className="w-full">
+                                            <thead className="bg-gray-50"><tr><th className="p-2 text-left">編號</th><th className="p-2 text-left">姓名</th><th className="p-2">性別</th><th className="p-2">電話</th><th className="p-2">生日</th><th className="p-2">驗光數</th><th className="p-2">操作</th></tr></thead>
+                                            <tbody>
+                                                {filteredCustomers.map((c, idx) => (
+                                                    <tr key={c.id || idx} className="border-t hover:bg-gray-50">
+                                                        <td className="p-2">{String(c.CID1 || '')}</td>
+                                                        <td className="p-2 text-blue-600 cursor-pointer" onClick={()=>setSelectedCustomer(c)}>{String(c.NAME || '')}</td>
+                                                        <td className="p-2 text-center">{String(c.SEX || '')}</td>
+                                                        <td className="p-2">{String(c.TEL || '')}</td>
+                                                        <td className="p-2">{String(c.BIRDATE || '')}</td>
+                                                        <td className="p-2 text-center font-bold">{prxCounts[String(c.CID1||'').trim()] || 0}</td>
+                                                        <td className="p-2 flex gap-2">
+                                                            <button onClick={()=>{setSelectedCustomer(c)}} className="text-blue-600" title="詳細資料"><FileText/></button>
+                                                            {isAdmin && <><button onClick={()=>openCustomerModal(c)} className="text-green-600"><Edit/></button><button onClick={()=>deleteCustomer(c.id, c.CID1)} className="text-red-600"><Trash2/></button></>}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {filteredCustomers.length === 0 && (
+                                                    <tr><td colSpan="7" className="text-center py-8 text-gray-400">尚無資料或無符合條件</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                        </div>
                                     </div>
-                                </div>
+                                )}
                             </div>
                         ) : selectedCustomer ? (
                             <div className="space-y-6 fade-in">
@@ -663,25 +650,43 @@
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                                                     <div className="bg-red-50 p-3 rounded border border-red-100">
                                                         <div className="font-bold text-red-800 mb-2 border-b border-red-200">右眼 (R)</div>
-                                                        <div className="grid grid-cols-4 gap-2">
+                                                        <div className="grid grid-cols-3 gap-2">
                                                             <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{String(p.RSPH || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{String(p.RCYL || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{String(p.RAXIS || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{String(p.RADD || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">H-Prism (RBCH)</span>{String(p.RBCH || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">V-Prism (RBCV)</span>{String(p.RBCV || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">矯正前 (VA1)</span>{String(p.RBRVISE1 || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">矯正後 (VA2)</span>{String(p.RBRVISE2 || '')}</div>
+                                                            <div className="col-span-3"><span className="text-gray-500 text-xs block">隱形眼鏡 (R-ITEM)</span>{String(p.RITEM || '')}</div>
                                                         </div>
                                                     </div>
                                                     <div className="bg-blue-50 p-3 rounded border border-blue-100">
                                                         <div className="font-bold text-blue-800 mb-2 border-b border-blue-200">左眼 (L)</div>
-                                                        <div className="grid grid-cols-4 gap-2">
+                                                        <div className="grid grid-cols-3 gap-2">
                                                             <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{String(p.LSPH || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{String(p.LCYL || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{String(p.LAXIS || '')}</div>
                                                             <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{String(p.LADD || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">H-Prism (LBCH)</span>{String(p.LBCH || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">V-Prism (LBCV)</span>{String(p.LBCV || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">矯正前 (VA1)</span>{String(p.LBRVISE1 || '')}</div>
+                                                            <div><span className="text-gray-500 text-xs block">矯正後 (VA2)</span>{String(p.LBRVISE2 || '')}</div>
+                                                            <div className="col-span-3"><span className="text-gray-500 text-xs block">隱形眼鏡 (L-ITEM)</span>{String(p.LITEM || '')}</div>
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="mt-3 text-xs text-gray-600 bg-gray-50 p-2 rounded">
-                                                    ITEM: {String(p.ITEM || '')} | R-ITEM: {String(p.RITEM || '')} | L-ITEM: {String(p.LITEM || '')} | 備註: {String(p.REMARK || '')}
+                                                {/* Footer Section with Separator */}
+                                                <div className="mt-4 pt-3 border-t-2 border-gray-100">
+                                                    <div className="text-xs text-gray-600 grid grid-cols-2 gap-y-2">
+                                                        <div><span className="font-bold text-gray-500">瞳距 (PD):</span> {String(p.PD || '')}</div>
+                                                        <div><span className="font-bold text-gray-500">年齡 (AGE):</span> {String(p.AGE || '')}</div>
+                                                        <div className="col-span-2"><span className="font-bold text-gray-500">鏡框/鏡片 (ITEM):</span> {String(p.ITEM || '')}</div>
+                                                        <div className="col-span-2"><span className="font-bold text-gray-500">備註 1:</span> {String(p.REMARK || '')}</div>
+                                                        <div className="col-span-2"><span className="font-bold text-gray-500">備註 2:</span> {String(p.REMARK2 || '')}</div>
+                                                        <div className="col-span-2"><span className="font-bold text-gray-500">備註 3:</span> {String(p.REMARK3 || '')}</div>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))}
@@ -720,20 +725,55 @@
                                         {field.key === 'ADDRESS' ? (
                                             <div className="space-y-2">
                                                 <div className="flex space-x-2">
-                                                    <select className="border p-1 rounded w-1/3" value={addrCity} onChange={e => {setAddrCity(e.target.value); setAddrDist('');}}>
+                                                    <select className="border p-1 rounded w-1/3" value={addrCity} onChange={e => {
+                                                        const newVal = e.target.value;
+                                                        setAddrCity(newVal);
+                                                        setAddrDist('');
+                                                        appendAddressPart(newVal);
+                                                    }}>
                                                         <option value="">縣市</option>
                                                         {Object.keys(TAIWAN_CITIES).map(c => <option key={c} value={c}>{c}</option>)}
                                                     </select>
-                                                    <select className="border p-1 rounded w-1/3" value={addrDist} onChange={e => setAddrDist(e.target.value)}>
+                                                    <select className="border p-1 rounded w-1/3" value={addrDist} onChange={e => {
+                                                        const newVal = e.target.value;
+                                                        setAddrDist(newVal);
+                                                        appendAddressPart(newVal);
+                                                    }}>
                                                         <option value="">鄉鎮市區</option>
                                                         {addrCity && TAIWAN_CITIES[addrCity]?.map(d => <option key={d} value={d}>{d}</option>)}
                                                     </select>
                                                     <div className="w-1/3">
-                                                        <input list="common-roads" className="border p-1 rounded w-full" placeholder="道路 (可選/輸)" value={addrRoad} onChange={e => setAddrRoad(e.target.value)} />
+                                                        <input list="common-roads" className="border p-1 rounded w-full" placeholder="道路 (可選/輸)" value={addrRoad} 
+                                                        onChange={e => {
+                                                            const newVal = e.target.value;
+                                                            setAddrRoad(newVal);
+                                                            // Only append if selected from list or typed full road? 
+                                                            // To avoid appending every char typed, maybe only append on blur or selection?
+                                                            // For simplicity, let's just use a button or assume user selects.
+                                                            // Or better: Don't auto-append on type, use a button or just let them type in the main field.
+                                                            // Requirement: "select or input... immediately added to end".
+                                                            // Input event triggers immediately. If I type 'Z', it appends 'Z'. If I type 'h', appends 'h'. 
+                                                            // This duplicates.
+                                                            // BETTER UX: This field is ONLY for selection. If they want to type, use the main box.
+                                                            // But datalist allows typing.
+                                                            // Let's append only when value matches an option? Or just on Change (which fires on commit)?
+                                                            // React onChange fires on every keystroke. 
+                                                            // Let's just append on change for dropdowns. For Road, maybe a "+" button is safer?
+                                                            // Or, since they can type in the main box, this road input is strictly a "Quick Picker".
+                                                        }} 
+                                                        onInput={(e) => {
+                                                             const val = e.target.value;
+                                                             // If the value is in the list, append it and clear this input
+                                                             if (COMMON_ROADS.includes(val)) {
+                                                                 appendAddressPart(val);
+                                                                 setAddrRoad('');
+                                                             }
+                                                        }}
+                                                        />
                                                         <datalist id="common-roads">{COMMON_ROADS.map(r => <option key={r} value={r} />)}</datalist>
                                                     </div>
                                                 </div>
-                                                <input className="border w-full p-1 rounded" placeholder="詳細地址 (巷/弄/號/樓)" value={addrDetail} onChange={e => setAddrDetail(e.target.value)} />
+                                                <input className="border w-full p-1 rounded" value={editingData.ADDRESS||''} onChange={e=>setEditingData({...editingData, ADDRESS:e.target.value})} />
                                             </div>
                                         ) : field.type === 'select' ? (
                                             <select className="border w-full p-1 rounded" value={editingData[field.key]||'男'} onChange={e=>setEditingData({...editingData,[field.key]:e.target.value})}>{field.options.map(o=><option key={o} value={o}>{o}</option>)}</select>
