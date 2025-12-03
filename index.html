@@ -5,20 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>鐘錶眼鏡客戶管理系統</title>
     
-    <!-- Tailwind CSS (UI 樣式) -->
+    <!-- Tailwind CSS (UI 樣式庫) -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM (前端框架) -->
+    <!-- React & ReactDOM (前端核心框架) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    <!-- Babel (JSX 編譯) -->
+    <!-- Babel (將 JSX 語法轉換為瀏覽器可執行的 JavaScript) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- PapaParse (CSV 處理) -->
+    <!-- PapaParse (用於 CSV 檔案的解析與產出) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
-    <!-- Firebase SDKs (身分驗證與資料庫) -->
+    <!-- Firebase SDKs (處理身分驗證 Auth 與 資料庫 Firestore) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { 
@@ -42,6 +42,7 @@
             onSnapshot
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // 將 Firebase 模組掛載到 window 物件，供 React 元件全域使用
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
             getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc, getDocs, query, where, onSnapshot
@@ -55,12 +56,14 @@
         const { useState, useEffect, useMemo, useRef, Component } = React;
 
         /* ==========================================================================
-           MODULE: Config.js (系統設定與常數)
-           用途：存放 API URL、Firebase 設定、地理資料、欄位定義
+           MODULE: Config.js (系統設定模組)
+           用途：定義全域常數、API 網址、Firebase 設定、表單欄位結構與地理資料。
            ========================================================================== */
         
+        // Google Apps Script 部署網址 (請確認此網址對應到正確的 GAS 專案)
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzcbRhUDh4UsPA0Mn7QnKsD0hkLeo-xrTXb2LHwKLUZHuYOBfGh-xVYeNyIoJXHxQT9/exec"; 
 
+        // Firebase 設定 (用於使用者登入與權限管理)
         const firebaseConfig = {
             apiKey: "AIzaSyDxtxWF-jQMMxvAeMjP5-HJ6y6_QBxLdsY",
             authDomain: "test1-1246d.firebaseapp.com",
@@ -71,16 +74,18 @@
             measurementId: "G-8JNGR22WDW"
         };
 
-        // 台灣縣市資料 (部分省略以節省空間，可自行擴充)
+        // 台灣縣市資料 (用於地址下拉選單，僅列出部分範例，可自行擴充)
         const TAIWAN_CITIES = {
             "臺北市": ["中正區", "大同區", "中山區", "松山區", "大安區", "萬華區", "信義區", "士林區", "北投區", "內湖區", "南港區", "文山區"],
             "臺南市": ["中西區", "東區", "南區", "北區", "安平區", "安南區", "永康區", "歸仁區", "新化區", "左鎮區", "玉井區", "楠西區", "南化區", "仁德區", "關廟區", "龍崎區", "官田區", "麻豆區", "佳里區", "西港區", "七股區", "將軍區", "學甲區", "北門區", "新營區", "後壁區", "白河區", "東山區", "六甲區", "下營區", "柳營區", "鹽水區", "善化區", "大內區", "山上區", "新市區", "安定區"],
             "高雄市": ["楠梓區", "左營區", "鼓山區", "三民區", "鹽埕區", "前金區", "新興區", "苓雅區", "前鎮區", "旗津區", "小港區", "鳳山區", "林園區", "大寮區", "大樹區", "大社區", "仁武區", "鳥松區", "岡山區", "橋頭區", "燕巢區", "田寮區", "阿蓮區", "路竹區", "湖內區", "茄萣區", "永安區", "彌陀區", "梓官區", "旗山區", "美濃區", "六龜區", "甲仙區", "杉林區", "內門區", "茂林區", "桃源區", "那瑪夏區"],
-            // ...其他縣市
+            // 其他縣市資料...
         };
 
+        // 通用道路列表 (當選不到特定行政區資料時使用)
         const COMMON_ROADS = ["中正路", "中山路", "中華路", "民族路", "民權路", "民生路", "成功路", "西門路", "北門路", "東門路", "南門路", "大同路", "開元路", "長榮路", "林森路", "東寧路", "裕農路", "小東路", "海安路", "金華路", "安平路", "安和路", "安中路", "北安路", "大灣路", "永大路", "中興路", "復興路"];
         
+        // 台南市特定行政區道路資料 (優化輸入體驗)
         const TAINAN_ROADS = {
             "永康區": ["中正北路", "中正南路", "中華路", "大灣路", "永大路", "復興路", "龍埔街", "中山北路", "中山南路", "文化路", "永華路", "自強路"],
             "東區": ["中華東路", "林森路", "東寧路", "裕農路", "崇德路", "崇明路", "小東路", "長榮路", "東門路", "前鋒路", "大學路"],
@@ -91,7 +96,8 @@
             "安平區": ["安平路", "華平路", "育平路", "國平路", "郡平路", "永華路", "慶平路", "安億路"]
         };
 
-        // 客戶欄位：日期改為 text 並標記需要 Append 功能
+        // 客戶資料表 (CMF) 欄位定義
+        // isDateAppendable: 標記此欄位是否需要顯示「日曆按鈕」以串接日期
         const CMF_FIELDS = [
             { key: 'CID1', label: '客戶編號', type: 'text', required: true },
             { key: 'NAME', label: '客戶姓名', type: 'text', required: true },
@@ -106,18 +112,24 @@
             { key: 'SUM', label: '總計', type: 'number' },
         ];
 
+        // 驗光資料表 (PRXMF) 欄位鍵值 (用於 CSV 匯出排序)
         const PRXMF_FIELDS_KEYS = ['DATE', 'RSPH', 'RCYL', 'RAXIS', 'RADD', 'RBCV', 'RBCH', 'LSPH', 'LCYL', 'LAXIS', 'LADD', 'LBCV', 'LBCH', 'PD', 'ITEM', 'RITEM', 'LITEM', 'RBRVISE1', 'LBRVISE1', 'RBRVISE2', 'LBRVISE2', 'REMARK', 'REMARK2', 'REMARK3', 'AGE', 'NUM'];
 
         /* ==========================================================================
            MODULE: Services.js (服務層)
-           用途：封裝 GAS API 呼叫
+           用途：負責與 Google Apps Script API 進行非同步通訊。
            ========================================================================== */
         const apiService = {
+            /**
+             * 讀取資料表
+             * @param {string} sheet - 資料表名稱 (CMF 或 PRXMF)
+             */
             read: async (sheet) => {
                 try {
                     const res = await fetch(`${GAS_API_URL}?action=read&sheet=${sheet}`);
                     const json = await res.json();
                     if (json.status === 'success' && Array.isArray(json.data)) {
+                        // 資料淨化：確保所有值都是字串或數字，避免 React 渲染物件(如 Date)時崩潰
                         return json.data.map(item => {
                             const cleanItem = {};
                             for (const key in item) {
@@ -131,14 +143,23 @@
                     return [];
                 } catch (e) { console.error(`API Read Error (${sheet}):`, e); return []; }
             },
+            /**
+             * 新增資料
+             */
             create: async (sheet, data) => {
                 const res = await fetch(GAS_API_URL, { method: 'POST', body: JSON.stringify({ action: 'create', sheet, data }) });
                 return await res.json();
             },
+            /**
+             * 更新資料
+             */
             update: async (sheet, id, data) => {
                 const res = await fetch(GAS_API_URL, { method: 'POST', body: JSON.stringify({ action: 'update', sheet, id, data }) });
                 return await res.json();
             },
+            /**
+             * 刪除資料
+             */
             delete: async (sheet, id) => {
                 const res = await fetch(GAS_API_URL, { method: 'POST', body: JSON.stringify({ action: 'delete', sheet, id }) });
                 return await res.json();
@@ -146,11 +167,16 @@
         };
 
         /* ==========================================================================
-           MODULE: Components.js (UI 元件)
-           用途：共用介面元件
+           MODULE: Components.js (UI 元件模組)
+           用途：包含 Loading 動畫、彈出視窗、圖示等共用元件。
            ========================================================================== */
-        const LoadingSpinner = () => <div className="flex justify-center items-center p-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>;
         
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+        );
+
         const Modal = ({ title, onClose, children, size = 'default' }) => (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                 <div className={`bg-white rounded-lg shadow-xl w-full ${size === 'large' ? 'max-w-6xl' : 'max-w-4xl'} max-h-[90vh] overflow-y-auto`}>
@@ -158,12 +184,14 @@
                         <h3 className="text-xl font-bold text-gray-800">{title}</h3>
                         <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
                     </div>
-                    <div className="p-6">{children}</div>
+                    <div className="p-6">
+                        {children}
+                    </div>
                 </div>
             </div>
         );
 
-        // Icons
+        // SVG Icons
         const Icon = ({ children, className, ...props }) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>;
         const Search = (props) => <Icon {...props}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></Icon>;
         const Plus = (props) => <Icon {...props}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></Icon>;
@@ -171,13 +199,14 @@
         const Edit = (props) => <Icon {...props}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></Icon>;
         const User = (props) => <Icon {...props}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></Icon>;
         const LogOut = (props) => <Icon {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></Icon>;
+        const FileSpreadsheet = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M8 13h2"></path><path d="M8 17h2"></path><path d="M14 13h2"></path><path d="M14 17h2"></path></Icon>;
         const Database = (props) => <Icon {...props}><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></Icon>;
         const Eye = (props) => <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></Icon>;
         const Lock = (props) => <Icon {...props}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></Icon>;
         const FileText = (props) => <Icon {...props}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></Icon>;
         const Calendar = (props) => <Icon {...props}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></Icon>;
 
-        // Error Boundary
+        // Error Boundary (全域錯誤攔截，防止白屏)
         class ErrorBoundary extends Component {
             constructor(props) { super(props); this.state = { hasError: false, error: null }; }
             static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -189,17 +218,17 @@
         }
 
         /* ==========================================================================
-           MODULE: Sub-Components (子元件 - 拆分出來避免語法錯誤)
+           MODULE: View Components (視圖元件 - 拆分以提升維護性)
            ========================================================================== */
 
-        // 1. 搜尋頁面元件
+        // 1. 搜尋頁面元件 (SearchView)
         const SearchView = ({ searchCriteria, setSearchCriteria, handleSearch, hasSearched, filteredCustomers, isAdmin, openCustomerModal, setSelectedCustomer, deleteCustomer, prxCounts }) => {
             return (
                 <div className="space-y-6">
                     <div className="bg-white p-4 rounded shadow">
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-lg font-semibold flex items-center"><Search className="w-5 h-5 mr-2"/> 搜尋條件</h2>
-                            {/* 管理員新增按鈕 (需求4) */}
+                            {/* 管理員新增按鈕 (需求4: 直接顯示) */}
                             {isAdmin && (
                                 <button onClick={() => openCustomerModal()} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center shadow hover:bg-blue-700 font-bold">
                                     <Plus className="w-4 h-4 mr-1"/> 新增客戶
@@ -236,7 +265,7 @@
                                                 </td>
                                             </tr>
                                         ))}
-                                        {filteredCustomers.length === 0 && <tr><td colSpan="7" className="text-center py-8 text-gray-400">尚無資料</td></tr>}
+                                        {filteredCustomers.length === 0 && <tr><td colSpan="7" className="text-center py-8 text-gray-400">尚無資料或無符合條件</td></tr>}
                                     </tbody>
                                 </table>
                             </div>
@@ -246,7 +275,7 @@
             );
         };
 
-        // 2. 詳細資料頁面元件
+        // 2. 詳細資料頁面元件 (CustomerDetailView)
         const CustomerDetailView = ({ selectedCustomer, isAdmin, openCustomerModal, openPrxModal, deletePrx, customerPrescriptions }) => {
             return (
                 <div className="space-y-6 fade-in">
@@ -278,10 +307,10 @@
                                         <div className="bg-red-50 p-3 rounded border border-red-100">
                                             <div className="font-bold text-red-800 mb-2 border-b border-red-200">右眼 (R)</div>
                                             <div className="grid grid-cols-3 gap-2">
-                                                <div><span className="text-gray-500 text-xs block">球面</span>{String(p.RSPH || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">散光</span>{String(p.RCYL || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">角度</span>{String(p.RAXIS || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">老花</span>{String(p.RADD || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{String(p.RSPH || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{String(p.RCYL || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{String(p.RAXIS || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{String(p.RADD || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">H-Prism</span>{String(p.RBCH || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">V-Prism</span>{String(p.RBCV || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">矯正前</span>{String(p.RBRVISE1 || '')}</div>
@@ -292,10 +321,10 @@
                                         <div className="bg-blue-50 p-3 rounded border border-blue-100">
                                             <div className="font-bold text-blue-800 mb-2 border-b border-blue-200">左眼 (L)</div>
                                             <div className="grid grid-cols-3 gap-2">
-                                                <div><span className="text-gray-500 text-xs block">球面</span>{String(p.LSPH || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">散光</span>{String(p.LCYL || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">角度</span>{String(p.LAXIS || '')}</div>
-                                                <div><span className="text-gray-500 text-xs block">老花</span>{String(p.LADD || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">球面(SPH)</span>{String(p.LSPH || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">散光(CYL)</span>{String(p.LCYL || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">角度(AXIS)</span>{String(p.LAXIS || '')}</div>
+                                                <div><span className="text-gray-500 text-xs block">老花(ADD)</span>{String(p.LADD || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">H-Prism</span>{String(p.LBCH || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">V-Prism</span>{String(p.LBCV || '')}</div>
                                                 <div><span className="text-gray-500 text-xs block">矯正前</span>{String(p.LBRVISE1 || '')}</div>
@@ -323,7 +352,7 @@
             );
         };
 
-        // 3. 管理員頁面元件
+        // 3. 管理員頁面元件 (AdminPanelView)
         const AdminPanelView = ({ exportCSV, systemUsers, addUser, updateUserRole, removeUser }) => {
             return (
                 <div className="space-y-6">
@@ -346,7 +375,9 @@
             );
         };
 
-        /* === MODULE: Main.js (主程式邏輯) === */
+        /* ==========================================================================
+           MODULE: Main.js (主程式邏輯)
+           ========================================================================== */
         const App = () => {
             const [user, setUser] = useState(null);
             const [isAdmin, setIsAdmin] = useState(false);
@@ -438,7 +469,7 @@
                         } catch (err) { if(PREDEFINED.includes(currentUser.email)) { setUserRole('admin'); setIsAdmin(true); } }
                     } else {
                         setIsAdmin(false); setUserRole(null); setCustomers([]); setAllPrescriptions([]); setSelectedCustomer(null);
-                        // Fix: Reset search state on logout/auth change
+                        // Fix: Reset Search State on Logout (需求1: 清除原先搜尋資料)
                         setFilteredCustomers([]); setHasSearched(false); setSearchCriteria({ CID1: '', NAME: '', TEL: '', ADDRESS: '', BIRDATE: '' });
                     }
                 });
@@ -472,15 +503,10 @@
                 try { await signInWithPopup(appAuth, new GoogleAuthProvider()); } 
                 catch (e) { setAuthError({ type: e.code === 'auth/unauthorized-domain' ? 'domain' : 'other', message: e.message, domain: window.location.hostname }); }
             };
-            const handleLogout = () => { 
-                const { signOut } = window.firebaseModules; 
-                signOut(appAuth);
-                // Force state clear
-                setCustomers([]); setAllPrescriptions([]); setSelectedCustomer(null); setFilteredCustomers([]); setHasSearched(false);
-            };
+            const handleLogout = () => { const { signOut } = window.firebaseModules; signOut(appAuth); };
 
             const handleSearch = () => {
-                if (!Array.isArray(customers)) return;
+                if (!Array.isArray(customers)) { setFilteredCustomers([]); return; }
                 const { CID1, NAME, TEL, ADDRESS, BIRDATE } = searchCriteria;
                 const lName = (NAME||'').toLowerCase(), lAddr = (ADDRESS||'').toLowerCase();
                 const filtered = customers.filter(c => {
@@ -520,9 +546,13 @@
                 }
             };
 
+            // 需求 6: 日期串接 (Append)
             const handleDateAppend = (key, dateVal) => {
                 if(!dateVal) return;
-                setEditingData(prev => ({ ...prev, [key]: (prev[key] ? prev[key] + ' ' : '') + dateVal }));
+                setEditingData(prev => ({
+                    ...prev,
+                    [key]: (prev[key] ? prev[key] + ' ' : '') + dateVal
+                }));
             };
 
             const saveCustomer = async () => {
@@ -531,35 +561,46 @@
                 const dataToSave = { ...editingData };
                 const sexVal = parseInt(editingData.SEX);
                 dataToSave.SEX = isNaN(sexVal) ? 1 : sexVal;
+                // 確保 CID1 為字串，避免掉零 (搭配後端修正)
                 dataToSave.CID1 = String(dataToSave.CID1);
 
                 try {
                     let newCustomer = null;
-                    // Optimistic Update Logic
                     if (mode === 'add') {
                         if (customers.some(c => String(c.CID1) === String(dataToSave.CID1))) { alert('編號重複'); setLoading(false); return; }
                         const tempId = 'temp_' + Date.now();
                         const optData = { ...dataToSave, id: tempId };
                         const newCustList = [...customers, optData];
                         
-                        // Update Main State Immediately
+                        // 樂觀更新 (Optimistic UI)
                         setCustomers(newCustList);
-                        // Update Search Results Immediately if active
                         if(hasSearched) setFilteredCustomers(prev => [...prev, optData]);
 
                         const res = await apiService.create('CMF', dataToSave);
                         if(res.status === 'success') {
                             newCustomer = res.data;
-                            // Replace temp with real data
+                            // 更新真實 ID
                             const realList = newCustList.map(c => c.id === tempId ? res.data : c);
                             setCustomers(realList);
                             if(hasSearched) setFilteredCustomers(prev => prev.map(c => c.id === tempId ? res.data : c));
                         }
                     } else {
-                        // Optimistic Edit
-                        const updatedList = customers.map(c => c.id === dataToSave.id ? dataToSave : c);
+                        // 需求 2 修正: 樂觀更新時，避免覆蓋整個列表為單筆資料
+                        // 使用 map 正確更新單筆
+                        const updatedList = customers.map(c => {
+                             // 比對 ID 或 CID1
+                             const isMatch = (c.id && c.id === dataToSave.id) || (!c.id && String(c.CID1) === String(dataToSave.CID1));
+                             return isMatch ? dataToSave : c;
+                        });
                         setCustomers(updatedList);
-                        if(hasSearched) setFilteredCustomers(prev => prev.map(c => c.id === dataToSave.id ? dataToSave : c));
+                        
+                        // 同步更新搜尋結果 (若有)
+                        if (hasSearched) {
+                             setFilteredCustomers(prev => prev.map(c => {
+                                 const isMatch = (c.id && c.id === dataToSave.id) || (!c.id && String(c.CID1) === String(dataToSave.CID1));
+                                 return isMatch ? dataToSave : c;
+                             }));
+                        }
                         
                         await apiService.update('CMF', dataToSave.id, dataToSave);
                     }
@@ -567,6 +608,7 @@
                     setIsCustomerModalOpen(false); 
                     showMsg('儲存成功', 'success'); 
                     
+                    // 需求 3: 自動接續流程 (新增驗光)
                     if(mode === 'add' && newCustomer) {
                         setSelectedCustomer(newCustomer);
                         setTimeout(() => openPrxModal(null, newCustomer), 500); 
@@ -591,7 +633,9 @@
                 const isView = !isAdmin && p !== null;
                 setIsViewOnly(isView);
                 setMode(p ? 'edit' : 'add');
-                setEditingData(p ? {...p} : { CID1: targetCustomer.CID1, NAME: targetCustomer.NAME, TEL: targetCustomer.TEL, DATE: new Date().toISOString().split('T')[0] });
+                setEditingData(p ? {...p} : {
+                    CID1: targetCustomer.CID1, NAME: targetCustomer.NAME, TEL: targetCustomer.TEL, DATE: new Date().toISOString().split('T')[0]
+                });
                 setIsPrxModalOpen(true);
             };
 
@@ -599,6 +643,7 @@
                 if(!isAdmin) return;
                 setLoading(true);
                 const dataToSave = { ...editingData };
+                dataToSave.CID1 = String(dataToSave.CID1); // Prevent drop zero
                 try {
                     if (mode === 'add') {
                         const tempPrx = { ...dataToSave, id: 'temp_' + Date.now() };
@@ -661,6 +706,14 @@
                 </div>
             );
 
+            const renderContent = () => {
+                if (userRole === 'pending') return <div className="flex flex-col items-center justify-center h-full text-gray-500"><Lock className="w-16 h-16 mb-4"/><h2 className="text-2xl font-bold">帳號審核中</h2><p>請聯繫管理員開通權限。</p></div>;
+                if (activeTab === 'search' && !selectedCustomer) return <SearchView searchCriteria={searchCriteria} setSearchCriteria={setSearchCriteria} handleSearch={handleSearch} hasSearched={hasSearched} filteredCustomers={filteredCustomers} isAdmin={isAdmin} openCustomerModal={openCustomerModal} setSelectedCustomer={setSelectedCustomer} deleteCustomer={deleteCustomer} prxCounts={prxCounts} />;
+                if (selectedCustomer) return <CustomerDetailView selectedCustomer={selectedCustomer} isAdmin={isAdmin} openCustomerModal={openCustomerModal} openPrxModal={openPrxModal} deletePrx={deletePrx} customerPrescriptions={customerPrescriptions} />;
+                if (activeTab === 'admin' && isAdmin) return <AdminPanelView exportCSV={exportCSV} systemUsers={systemUsers} addUser={addUser} updateUserRole={updateUserRole} removeUser={removeUser} />;
+                return null;
+            };
+
             return (
                 <div className="min-h-screen flex flex-col relative">
                     {loading && <div className="fixed inset-0 bg-black bg-opacity-30 z-[70] flex flex-col items-center justify-center text-white"><LoadingSpinner/><p className="text-lg font-bold">處理中...</p></div>}
@@ -674,12 +727,7 @@
                         {isAdmin && <button className={`px-6 py-3 border-b-2 ${activeTab==='admin'?'border-blue-600 text-blue-600':''}`} onClick={() => {setSelectedCustomer(null); setActiveTab('admin'); fetchSystemUsers();}}>系統管理</button>}
                     </nav>
                     {msg.text && <div className={`fixed top-4 right-4 p-4 rounded shadow text-white z-50 ${msg.type==='success'?'bg-green-500':'bg-red-500'}`}>{msg.text}</div>}
-                    <main className="flex-1 container mx-auto p-4 overflow-y-auto">
-                        {userRole === 'pending' ? <div className="flex flex-col items-center justify-center h-full text-gray-500"><Lock className="w-16 h-16 mb-4"/><h2 className="text-2xl font-bold">帳號審核中</h2><p>請聯繫管理員開通權限。</p></div> : 
-                         activeTab === 'search' && !selectedCustomer ? <SearchView searchCriteria={searchCriteria} setSearchCriteria={setSearchCriteria} handleSearch={handleSearch} hasSearched={hasSearched} filteredCustomers={filteredCustomers} isAdmin={isAdmin} openCustomerModal={openCustomerModal} setSelectedCustomer={setSelectedCustomer} deleteCustomer={deleteCustomer} prxCounts={prxCounts} /> : 
-                         selectedCustomer ? <CustomerDetailView selectedCustomer={selectedCustomer} isAdmin={isAdmin} openCustomerModal={openCustomerModal} openPrxModal={openPrxModal} deletePrx={deletePrx} customerPrescriptions={customerPrescriptions} /> : 
-                         activeTab === 'admin' && isAdmin ? <AdminPanelView exportCSV={exportCSV} systemUsers={systemUsers} addUser={addUser} updateUserRole={updateUserRole} removeUser={removeUser} /> : null}
-                    </main>
+                    <main className="flex-1 container mx-auto p-4 overflow-y-auto">{renderContent()}</main>
 
                     {/* Customer Modal */}
                     {isCustomerModalOpen && (
